@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+# local config + engagement data (may contain target info — keep out of git)
+config.yaml
+engagements/*.db
+report*.md

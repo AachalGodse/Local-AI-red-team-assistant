@@ -1,0 +1,34 @@
+# GhostOps configuration. Copy to ~/.ghostops/config.yaml or ./config.yaml
+# and edit. GhostOps loads (in order): ./config.yaml, ~/.ghostops/config.yaml,
+# then these built-in defaults.
+
+llm:
+  # Ollama model to use. dolphin-mistral (7B) is the recommended default.
+  # No GPU? Try "phi3:mini" (CPU-friendly).
+  model: dolphin-mistral
+  host: http://localhost:11434
+  temperature: 0.4
+  # If Ollama is unreachable, GhostOps runs in offline mode (manual commands
+  # still work; only the AI reasoning is disabled).
+
+engagements:
+  # Where engagement databases are stored.
+  dir: ./engagements
+
+tools:
+  # Per-tool defaults. Timeouts are in seconds.
+  nmap:
+    default_args: "-sV -T4"
+    timeout: 600
+  gobuster:
+    # common.txt (~4.6k entries) is fast; swap for a dirbuster list for depth.
+    wordlist: /usr/share/wordlists/dirb/common.txt
+    timeout: 600
+  searchsploit:
+    timeout: 120
+
+safety:
+  # Require explicit y/N confirmation before executing any tool.
+  confirm_before_run: true
+  # Hard-block execution against targets outside the engagement scope.
+  enforce_scope: true

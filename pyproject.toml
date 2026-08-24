@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghostops"
+version = "0.1.0"
+description = "Local AI Red Team Assistant — uncensored, agentic, OPSEC-safe (authorized use only)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+keywords = ["pentesting", "red-team", "security", "offensive", "ai"]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ghostops = "ghostops.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["ghostops*"]

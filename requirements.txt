@@ -1,0 +1,9 @@
+# Core runtime deps (MVP — deliberately minimal)
+typer>=0.12.0
+rich>=13.0
+pyyaml>=6.0
+jinja2>=3.1
+requests>=2.31
+# Ollama python client (LLM runtime). Optional at dev time — GhostOps
+# degrades to offline mode if Ollama isn't reachable.
+ollama>=0.4.0
