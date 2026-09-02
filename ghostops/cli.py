@@ -170,6 +170,25 @@ def checklist(
 
 
 @app.command()
+def attack():
+    """Show the GhostOps action -> MITRE ATT&CK technique mapping."""
+    from rich.table import Table
+    from ghostops.methodology import mitre
+    if not mitre.available():
+        console.print("[red]ATT&CK map not found on disk.[/red] "
+                      "Run on Kali/WSL or restore knowledge/mitre.yaml.")
+        raise typer.Exit(1)
+    t = Table(title="GhostOps -> MITRE ATT&CK")
+    t.add_column("Action", style="cyan")
+    t.add_column("Tactic", style="magenta")
+    t.add_column("ID", no_wrap=True)
+    t.add_column("Technique")
+    for section, key, tech in mitre.all_techniques():
+        t.add_row(f"{section[:-1]}:{key}", tech.tactic, tech.id, tech.name)
+    console.print(t)
+
+
+@app.command()
 def setup():
     """First-run setup - check tools, models, and config."""
     from ghostops.setup_wizard import run_setup

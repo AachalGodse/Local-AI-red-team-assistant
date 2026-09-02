@@ -29,9 +29,10 @@ This is the reliable core the rest builds on. Implemented and tested:
   upgrades and privesc enum, with per-payload OPSEC notes and `--encode`
 - ✅ **Service checklists** — curated per-service enumeration methodology
   (16 services) that also drives the `next` suggestions
+- ✅ **MITRE ATT&CK mapping** — actions (tools, payloads) map to ATT&CK
+  techniques; the report gains an ATT&CK section
 
-Not yet built (roadmap): RAG (vector) memory, MITRE ATT&CK mapping.
-See `GhostOps_Plan.md`.
+Not yet built (roadmap): RAG (vector) memory. See `GhostOps_Plan.md`.
 
 > **Payloads are curated, not model-generated.** GhostOps ships a reviewed
 > catalog (`ghostops/knowledge/payloads.yaml`) rather than asking the LLM to
@@ -108,6 +109,7 @@ ghostops generate listener nc -p 4444
 
 ghostops checklist                             # list services with checklists
 ghostops checklist smb                         # enumeration steps for SMB
+ghostops attack                                # action -> MITRE ATT&CK map
 ```
 
 Inside an engagement (REPL):
@@ -124,6 +126,7 @@ webshell <name> [param]                 generate a web shell
 listener <name> <lport>                 attacker-side listener
 tty / privesc <name>   post-exploitation helpers
 checklist [service]    per-service enumeration methodology
+attack / mitre         ATT&CK techniques exercised so far
 what do we know        full engagement summary
 next                   suggested next steps from discovered services
 scope / scope add X    view or extend the authorized scope

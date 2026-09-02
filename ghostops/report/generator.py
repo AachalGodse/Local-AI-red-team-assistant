@@ -106,6 +106,22 @@ def render_markdown(e: Engagement) -> str:
             )
         lines.append("")
 
+    # ---- MITRE ATT&CK techniques ----
+    from ghostops.methodology import mitre
+    if mitre.available():
+        observed = mitre.observed(e)
+        if observed:
+            lines.append("## MITRE ATT&CK Techniques")
+            lines.append("")
+            lines.append("| Tactic | ID | Technique | Observed via |")
+            lines.append("|---|---|---|---|")
+            for tech, prov in observed:
+                lines.append(
+                    f"| {tech.tactic} | {tech.id} | {tech.name} | "
+                    f"{', '.join(prov)} |"
+                )
+            lines.append("")
+
     # ---- methodology / activity log ----
     lines.append("## Methodology & Activity Log")
     lines.append("")

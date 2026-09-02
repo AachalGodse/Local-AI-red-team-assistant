@@ -135,6 +135,8 @@ class Orchestrator:
         if (low in ("checklist", "checklists", "/checklist")
                 or low.startswith("checklist ")):
             return self._handle_checklist(text)
+        if low in ("attack", "mitre", "att&ck", "/attack", "/mitre"):
+            return self._show_attack()
         if low.startswith("scan "):
             target = text[5:].strip()
             return self._execute_tool(
@@ -446,6 +448,30 @@ class Orchestrator:
         if not shown:
             show_index(console)
 
+    # ------------------------------------------------------------- attack
+    def _show_attack(self) -> None:
+        from ghostops.methodology import mitre
+        if not mitre.available():
+            console.print("[yellow]ATT&CK map not on disk.[/yellow] "
+                          "(run on Kali/WSL)")
+            return
+        observed = mitre.observed(self.e)
+        if not observed:
+            console.print(Panel(
+                "No ATT&CK techniques exercised yet. Run a tool or generate "
+                "a payload, then check again.",
+                border_style="magenta", title="MITRE ATT&CK",
+            ))
+            return
+        t = Table(title="MITRE ATT&CK - techniques exercised")
+        t.add_column("Tactic", style="magenta")
+        t.add_column("ID", style="cyan", no_wrap=True)
+        t.add_column("Technique")
+        t.add_column("Via", style="dim")
+        for tech, prov in observed:
+            t.add_row(tech.tactic, tech.id, tech.name, ", ".join(prov))
+        console.print(t)
+
     # -------------------------------------------------------------- scope
     def _handle_scope(self, text: str) -> None:
         parts = text.split()
@@ -546,6 +572,7 @@ class Orchestrator:
             "  listener <name> <lport>               attacker-side listener\n"
             "  tty / privesc <name>  post-exploitation helpers\n"
             "  checklist [service]   per-service enumeration methodology\n"
+            "  attack / mitre        ATT&CK techniques exercised so far\n"
             "  what do we know       full engagement summary\n"
             "  next                  suggested next steps\n"
             "  scope / scope add X   view or extend scope\n"

@@ -1,0 +1,38 @@
+# GhostOps -> MITRE ATT&CK mapping.
+#
+# Maps each GhostOps action (a tool it runs, a payload it generates) to the
+# ATT&CK technique(s) it represents. Curated and version-checked against the
+# ATT&CK matrix, not model-generated - the report cites real technique IDs, not
+# invented ones. Used to annotate the activity trail and to build the
+# "MITRE ATT&CK Techniques" section of the report.
+#
+# Each technique: tactic, id (Txxxx[.yyy]), name.
+
+tools:
+  nmap:
+    - {tactic: Discovery, id: T1046, name: Network Service Discovery}
+    - {tactic: Reconnaissance, id: T1595.001, name: "Active Scanning: Scanning IP Blocks"}
+  gobuster:
+    - {tactic: Reconnaissance, id: T1595.003, name: "Active Scanning: Wordlist Scanning"}
+  searchsploit:
+    - {tactic: Resource Development, id: T1588.005, name: "Obtain Capabilities: Exploits"}
+  sqlmap:
+    - {tactic: Initial Access, id: T1190, name: Exploit Public-Facing Application}
+  hydra:
+    - {tactic: Credential Access, id: T1110, name: Brute Force}
+
+payloads:
+  revshell:
+    - {tactic: Execution, id: T1059, name: Command and Scripting Interpreter}
+    - {tactic: Command and Control, id: T1095, name: Non-Application Layer Protocol}
+  bindshell:
+    - {tactic: Execution, id: T1059, name: Command and Scripting Interpreter}
+  webshell:
+    - {tactic: Persistence, id: T1505.003, name: "Server Software Component: Web Shell"}
+  listener:
+    - {tactic: Command and Control, id: T1095, name: Non-Application Layer Protocol}
+  tty:
+    - {tactic: Execution, id: T1059.004, name: "Command and Scripting Interpreter: Unix Shell"}
+  privesc:
+    - {tactic: Privilege Escalation, id: T1068, name: Exploitation for Privilege Escalation}
+    - {tactic: Discovery, id: T1082, name: System Information Discovery}
