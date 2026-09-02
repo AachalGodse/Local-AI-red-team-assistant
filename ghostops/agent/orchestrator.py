@@ -132,6 +132,9 @@ class Orchestrator:
             )
         if low in ("next", "/next"):
             return self._suggest_next()
+        if (low in ("checklist", "checklists", "/checklist")
+                or low.startswith("checklist ")):
+            return self._handle_checklist(text)
         if low.startswith("scan "):
             target = text[5:].strip()
             return self._execute_tool(
@@ -385,33 +388,63 @@ class Orchestrator:
             console.print("[dim]Nothing discovered yet. Try: scan <target>[/dim]")
 
     def _suggest_next(self) -> None:
-        # deterministic suggestions based on discovered services
+        # Deterministic suggestions, driven by the curated service checklists:
+        # for each discovered service, surface its top methodology step.
+        from ghostops.methodology import checklists as cl
         tips: list[str] = []
-        for h in self.e.hosts:
-            for s in h.services:
-                if s.name in ("http", "https") or s.port in (80, 443, 8080):
-                    tips.append(
-                        f"{h.ip}:{s.port} web - run gobuster/ffuf for "
-                        f"directories, nikto for vulns"
-                    )
-                if s.name == "ssh" or s.port == 22:
-                    tips.append(
-                        f"{h.ip}:22 SSH - searchsploit '{s.banner}', "
-                        f"check weak creds"
-                    )
-                if s.name in ("mysql", "ms-sql-s") or s.port in (3306, 1433):
-                    tips.append(f"{h.ip}:{s.port} DB - test default/weak creds")
-                if s.name in ("microsoft-ds", "netbios-ssn") or s.port in (139, 445):
-                    tips.append(
-                        f"{h.ip}:{s.port} SMB - enum4linux / smbclient "
-                        f"share enumeration"
-                    )
+        if cl.available():
+            for h in self.e.hosts:
+                for s in h.services:
+                    match = cl.match(s.name, s.port)
+                    if match is None or not match.checks:
+                        continue
+                    step = next((c for c in match.checks if c.cmd),
+                                match.checks[0])
+                    line = f"{h.ip}:{s.port} {match.name} - {step.task}"
+                    if step.cmd:
+                        line += "\n    " + cl.render_cmd(step.cmd, h.ip, s.port)
+                    tips.append(line)
         if not tips:
-            tips = ["Run an nmap scan to discover services: scan <target>"]
+            tips = (["Run an nmap scan to discover services: scan <target>"]
+                    if not self.e.hosts else
+                    ["No checklist matched the open services. "
+                     "Browse methodology with 'checklist'."])
         console.print(Panel(
             "\n".join(f"- {t}" for t in dict.fromkeys(tips)),
             border_style="magenta", title="Suggested Next Steps",
         ))
+        if self.e.hosts and cl.available():
+            console.print("[dim]Full per-service steps: 'checklist'[/dim]")
+
+    # ---------------------------------------------------------- checklists
+    def _handle_checklist(self, text: str) -> None:
+        from ghostops.methodology import checklists as cl
+        from ghostops.methodology.display import show_checklist, show_index
+        if not cl.available():
+            console.print(
+                "[yellow]Checklist catalog not on disk.[/yellow] "
+                "(AV quarantine? run on Kali/WSL.)"
+            )
+            return
+        parts = text.split()
+        if len(parts) > 1:
+            key = parts[1].lower()
+            match = cl.get(key) or cl.match(key)
+            if match is None:
+                console.print(f"[red]No checklist for '{key}'.[/red]")
+                return show_index(console)
+            return show_checklist(console, match, stealth=self.e.stealth)
+        # no argument: show checklists for what we've discovered, else the index
+        shown = False
+        for h in self.e.hosts:
+            for s in h.services:
+                match = cl.match(s.name, s.port)
+                if match is not None:
+                    show_checklist(console, match, host=h.ip, port=s.port,
+                                   stealth=self.e.stealth)
+                    shown = True
+        if not shown:
+            show_index(console)
 
     # -------------------------------------------------------------- scope
     def _handle_scope(self, text: str) -> None:
@@ -512,6 +545,7 @@ class Orchestrator:
             "  webshell <name> [param]               web shell\n"
             "  listener <name> <lport>               attacker-side listener\n"
             "  tty / privesc <name>  post-exploitation helpers\n"
+            "  checklist [service]   per-service enumeration methodology\n"
             "  what do we know       full engagement summary\n"
             "  next                  suggested next steps\n"
             "  scope / scope add X   view or extend scope\n"

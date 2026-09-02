@@ -1,0 +1,308 @@
+# GhostOps service enumeration checklists.
+#
+# Curated pentest methodology, one entry per service. Same grounding rule as
+# payloads.yaml / searchsploit_tool.py: the guidance is reviewed and concrete,
+# not model-generated, so a weak local model can't invent wrong flags. Used by
+# the `checklist` command and to drive deterministic `next` suggestions.
+#
+# Command placeholders {host} and {port} are filled in per discovered service
+# by literal replacement.
+#
+# Per-service:
+#   name    display label
+#   ports   typical ports (used to match a discovered service)
+#   names   nmap service names that map here
+#   phase   kill-chain phase the checklist belongs to
+#   checks  ordered methodology steps, each:
+#     task   what to do
+#     tool   (optional) GhostOps tool or external binary
+#     cmd    (optional) concrete command, {host}/{port} substituted
+#     why    (optional) what it buys you
+#     noise  (optional) low|medium|high OPSEC signal
+
+ftp:
+  name: FTP
+  ports: [21]
+  names: [ftp]
+  phase: enumeration
+  checks:
+    - task: Try anonymous login
+      cmd: "ftp {host}"
+      why: "user 'anonymous', any password - a classic open door"
+      noise: low
+    - task: Grab the banner / version
+      tool: nmap
+      cmd: "nmap -sV -p{port} {host}"
+      why: vsftpd/ProFTPD version maps to known CVEs
+    - task: Search ExploitDB for the version
+      tool: searchsploit
+      cmd: "searchsploit <product> <version>"
+    - task: Brute-force credentials if login is exposed
+      tool: hydra
+      cmd: "hydra -L users.txt -P rockyou.txt ftp://{host}:{port}"
+      noise: high
+    - task: If access, list and pull files
+      why: config files and creds are often left in FTP roots
+
+ssh:
+  name: SSH
+  ports: [22]
+  names: [ssh]
+  phase: enumeration
+  checks:
+    - task: Record the version banner
+      tool: nmap
+      cmd: "nmap -sV -p{port} {host}"
+      why: OpenSSH/Dropbear version maps to known CVEs
+    - task: Search ExploitDB for the version
+      tool: searchsploit
+      cmd: "searchsploit OpenSSH <version>"
+    - task: Enumerate accepted auth methods
+      cmd: "ssh -v {host} -p {port}"
+      why: password vs key-only tells you if brute force is viable
+    - task: Test weak / default credentials
+      tool: hydra
+      cmd: "hydra -L users.txt -P rockyou.txt ssh://{host}:{port}"
+      noise: high
+
+telnet:
+  name: Telnet
+  ports: [23]
+  names: [telnet]
+  phase: enumeration
+  checks:
+    - task: Connect and read the banner
+      cmd: "telnet {host} {port}"
+      why: device/OS fingerprint, sometimes a login-free shell
+      noise: low
+    - task: Test default credentials
+      why: telnet is common on IoT/network gear with vendor defaults
+    - task: Note cleartext exposure
+      why: credentials cross the wire in plaintext - flag as a finding
+
+smtp:
+  name: SMTP
+  ports: [25, 465, 587]
+  names: [smtp, smtps]
+  phase: enumeration
+  checks:
+    - task: Banner grab
+      cmd: "nc {host} {port}"
+      why: mail server product/version
+    - task: Enumerate valid users
+      cmd: "smtp-user-enum -M VRFY -U users.txt -t {host}"
+      why: VRFY/EXPN/RCPT leak valid local accounts
+    - task: Check for open relay
+      tool: nmap
+      cmd: "nmap -p{port} --script smtp-open-relay {host}"
+      noise: medium
+
+dns:
+  name: DNS
+  ports: [53]
+  names: [domain]
+  phase: reconnaissance
+  checks:
+    - task: Attempt a zone transfer
+      cmd: "dig axfr @{host} <domain>"
+      why: AXFR dumps every record - a full map of the internal estate
+      noise: low
+    - task: Reverse lookups across the range
+      cmd: "dnsrecon -r <cidr> -n {host}"
+    - task: Fingerprint the resolver version
+      cmd: "dig CH TXT version.bind @{host}"
+
+http:
+  name: HTTP / Web
+  ports: [80, 8000, 8080, 8888, 8081]
+  names: [http, http-alt, http-proxy]
+  phase: enumeration
+  checks:
+    - task: Directory / file brute-force
+      tool: gobuster
+      cmd: "gobuster dir -u http://{host}:{port} -w <wordlist>"
+      why: hidden admin panels, backups, configs
+    - task: Web server vulnerability scan
+      tool: nikto
+      cmd: "nikto -h http://{host}:{port}"
+      noise: medium
+    - task: Fingerprint the tech stack
+      cmd: "whatweb http://{host}:{port}"
+      why: CMS/framework/version drives exploit selection
+    - task: Check the obvious files
+      why: "robots.txt, sitemap.xml, /.git/, /.env, backup archives"
+    - task: If a CMS, run the matching scanner
+      cmd: "wpscan --url http://{host}:{port}   # WordPress"
+
+https:
+  name: HTTPS / TLS Web
+  ports: [443, 8443]
+  names: [https, ssl/http, https-alt]
+  phase: enumeration
+  checks:
+    - task: Inspect the certificate
+      cmd: "openssl s_client -connect {host}:{port}"
+      why: CN/SAN leak internal hostnames and other vhosts
+    - task: Test TLS configuration
+      tool: nmap
+      cmd: "nmap -p{port} --script ssl-enum-ciphers {host}"
+      why: weak ciphers, expired certs, Heartbleed
+    - task: Directory brute-force over HTTPS
+      tool: gobuster
+      cmd: "gobuster dir -u https://{host}:{port} -w <wordlist> -k"
+    - task: Web vulnerability scan
+      tool: nikto
+      cmd: "nikto -h https://{host}:{port}"
+      noise: medium
+
+smb:
+  name: SMB / NetBIOS
+  ports: [139, 445]
+  names: [microsoft-ds, netbios-ssn, smb]
+  phase: enumeration
+  checks:
+    - task: Full SMB enumeration
+      cmd: "enum4linux-ng -A {host}"
+      why: shares, users, groups, password policy in one pass
+    - task: List shares (null session)
+      cmd: "smbclient -L //{host}/ -N"
+      why: anonymous share access is a frequent quick win
+    - task: Check for signing / known vulns
+      tool: nmap
+      cmd: "nmap -p{port} --script smb-security-mode,smb-vuln-* {host}"
+      why: MS17-010 (EternalBlue) and friends
+    - task: Access an open share
+      cmd: "smbclient //{host}/<share> -N"
+    - task: Brute-force credentials if needed
+      tool: hydra
+      cmd: "hydra -L users.txt -P rockyou.txt smb://{host}"
+      noise: high
+
+snmp:
+  name: SNMP
+  ports: [161]
+  names: [snmp]
+  phase: enumeration
+  checks:
+    - task: Try common community strings
+      cmd: "onesixtyone {host} -c community.txt"
+      why: "'public'/'private' expose the whole MIB"
+      noise: low
+    - task: Walk the MIB
+      cmd: "snmpwalk -v2c -c public {host}"
+      why: processes, users, routes, sometimes credentials
+    - task: Pull high-value branches
+      cmd: "snmp-check {host} -c public"
+
+ldap:
+  name: LDAP
+  ports: [389, 636, 3268]
+  names: [ldap, ldapssl]
+  phase: enumeration
+  checks:
+    - task: Anonymous bind + base dump
+      cmd: "ldapsearch -x -H ldap://{host} -s base namingcontexts"
+      why: naming contexts, then dump users/groups
+    - task: Enumerate the directory
+      cmd: "ldapsearch -x -H ldap://{host} -b <base-dn>"
+      why: AD user list, descriptions (passwords hide there)
+    - task: Cross-reference with SMB/Kerberos
+      why: LDAP + SMB together map an AD domain
+
+mssql:
+  name: Microsoft SQL Server
+  ports: [1433]
+  names: [ms-sql-s, ms-sql]
+  phase: enumeration
+  checks:
+    - task: Fingerprint and gather info
+      tool: nmap
+      cmd: "nmap -p{port} --script ms-sql-info,ms-sql-ntlm-info {host}"
+    - task: Test default / weak credentials
+      why: "sa with a blank or weak password is common"
+      noise: high
+    - task: If access, check xp_cmdshell
+      cmd: "impacket-mssqlclient <user>:<pass>@{host}"
+      why: xp_cmdshell = command execution as the service account
+
+mysql:
+  name: MySQL / MariaDB
+  ports: [3306]
+  names: [mysql]
+  phase: enumeration
+  checks:
+    - task: Fingerprint the version
+      tool: nmap
+      cmd: "nmap -p{port} --script mysql-info {host}"
+    - task: Try passwordless / default root
+      cmd: "mysql -h {host} -u root"
+      why: root with no password still happens
+    - task: Enumerate once authenticated
+      tool: nmap
+      cmd: "nmap -p{port} --script mysql-databases,mysql-users {host}"
+    - task: Brute-force if needed
+      tool: hydra
+      cmd: "hydra -L users.txt -P rockyou.txt mysql://{host}"
+      noise: high
+
+rdp:
+  name: RDP
+  ports: [3389]
+  names: [ms-wbt-server, rdp]
+  phase: enumeration
+  checks:
+    - task: Fingerprint and check NLA
+      tool: nmap
+      cmd: "nmap -p{port} --script rdp-ntlm-info,rdp-enum-encryption {host}"
+      why: NTLM info leaks hostname/domain; no-NLA invites BlueKeep
+    - task: Test for BlueKeep (CVE-2019-0708)
+      tool: nmap
+      cmd: "nmap -p{port} --script rdp-vuln-ms12-020 {host}"
+    - task: Credential spray (carefully)
+      cmd: "hydra -L users.txt -P pass.txt rdp://{host}"
+      why: RDP lockout policies make this loud
+      noise: high
+
+postgresql:
+  name: PostgreSQL
+  ports: [5432]
+  names: [postgresql, postgres]
+  phase: enumeration
+  checks:
+    - task: Try default credentials
+      cmd: "psql -h {host} -U postgres"
+      why: "postgres/postgres and trust auth are common"
+    - task: Enumerate once in
+      cmd: "\\l  and  \\du   inside psql"
+      why: databases and roles
+    - task: Check for command execution
+      why: "COPY ... FROM PROGRAM gives RCE on superuser roles"
+
+redis:
+  name: Redis
+  ports: [6379]
+  names: [redis]
+  phase: enumeration
+  checks:
+    - task: Connect unauthenticated
+      cmd: "redis-cli -h {host}"
+      why: no auth by default - INFO, KEYS *, CONFIG GET
+      noise: low
+    - task: Dump keys and config
+      cmd: "redis-cli -h {host} CONFIG GET '*'"
+    - task: Attempt RCE via write primitives
+      why: "webshell via CONFIG SET dir, or SSH key write to authorized_keys"
+
+vnc:
+  name: VNC
+  ports: [5900, 5901]
+  names: [vnc]
+  phase: enumeration
+  checks:
+    - task: Fingerprint and check auth
+      tool: nmap
+      cmd: "nmap -p{port} --script vnc-info,realvnc-auth-bypass {host}"
+    - task: Test blank / weak password
+      cmd: "vncviewer {host}:{port}"
+      why: unauthenticated or weak VNC = instant desktop
+      noise: medium

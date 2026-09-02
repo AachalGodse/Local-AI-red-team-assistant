@@ -147,6 +147,29 @@ def generate(
 
 
 @app.command()
+def checklist(
+    service: str = typer.Argument(
+        None, help="service name, e.g. http, ssh, smb (omit to list all)"
+    ),
+):
+    """Show the enumeration checklist for a service (curated methodology)."""
+    from ghostops.methodology import checklists as cl
+    from ghostops.methodology.display import show_checklist, show_index
+    if not cl.available():
+        console.print("[red]Checklist catalog not found on disk.[/red] "
+                      "Run on Kali/WSL or restore knowledge/checklists.yaml.")
+        raise typer.Exit(1)
+    if service is None:
+        return show_index(console)
+    match = cl.get(service) or cl.match(service)
+    if match is None:
+        console.print(f"[red]No checklist for '{service}'.[/red]")
+        show_index(console)
+        raise typer.Exit(1)
+    show_checklist(console, match)
+
+
+@app.command()
 def setup():
     """First-run setup - check tools, models, and config."""
     from ghostops.setup_wizard import run_setup
