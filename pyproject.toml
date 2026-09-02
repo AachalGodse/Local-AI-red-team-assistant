@@ -26,3 +26,8 @@ ghostops = "ghostops.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["ghostops*"]
+
+# Ship the curated knowledge base inside the wheel. Both the plaintext
+# (payloads.yaml) and AV-safe base64 (payloads.b64) forms are packaged.
+[tool.setuptools.package-data]
+"ghostops.knowledge" = ["*.yaml", "*.b64"]

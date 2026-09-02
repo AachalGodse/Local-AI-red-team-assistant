@@ -128,7 +128,7 @@ class ActivityLog:
     """One action taken during the engagement (audit trail + report input)."""
 
     timestamp: str
-    kind: str                 # "tool", "note", "phase", "llm"
+    kind: str                 # "tool", "note", "phase", "llm", "payload"
     summary: str
     detail: str = ""
 

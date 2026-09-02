@@ -24,9 +24,18 @@ This is the reliable core the rest builds on. Implemented and tested:
 - ✅ **Kill-chain phase** tracking with auto-advance
 - ✅ **Markdown report** generator
 - ✅ **Offline mode** — works with commands even when Ollama isn't running
+- ✅ **Tools:** nmap, gobuster, searchsploit, sqlmap, hydra
+- ✅ **Payload generator** — curated reverse/bind/web shells, listeners, TTY
+  upgrades and privesc enum, with per-payload OPSEC notes and `--encode`
 
-Not yet built (roadmap): more tools (gobuster, searchsploit, sqlmap, hydra),
-payload generator, RAG memory, packaging. See `GhostOps_Plan.md`.
+Not yet built (roadmap): RAG (vector) memory, MITRE ATT&CK mapping,
+service-specific checklists. See `GhostOps_Plan.md`.
+
+> **Payloads are curated, not model-generated.** GhostOps ships a reviewed
+> catalog (`ghostops/knowledge/payloads.yaml`) rather than asking the LLM to
+> write shells — the plan's whole point is that local models fabricate wrong
+> exploit syntax. Note: host antivirus (Windows Defender) quarantines the
+> plaintext catalog on sight; see **Antivirus** below.
 
 ---
 
@@ -88,12 +97,27 @@ ghostops shell                       # free chat (scope = *)
 ghostops resume last                 # resume the most recent engagement
 ghostops engagements                 # list all saved engagements
 ghostops report last -o report.md    # generate a pentest report
+
+ghostops generate                              # browse the payload catalog
+ghostops generate revshell python3 -l 10.10.14.5 -p 4444
+ghostops generate revshell bash -l 10.10.14.5 -p 4444 --encode
+ghostops generate webshell php --param cmd
+ghostops generate listener nc -p 4444
 ```
 
 Inside an engagement (REPL):
 
 ```
 scan <target>          run an nmap scan (in-scope only)
+gobuster <url>         brute-force web directories
+searchsploit <terms>  search ExploitDB
+sqlmap <url>          test a URL for SQL injection
+hydra <t> <svc> <u> <passlist>   brute-force a login
+payloads [category]    browse the payload catalog
+revshell <name> <lhost> <lport> [enc]   generate a reverse shell
+webshell <name> [param]                 generate a web shell
+listener <name> <lport>                 attacker-side listener
+tty / privesc <name>   post-exploitation helpers
 what do we know        full engagement summary
 next                   suggested next steps from discovered services
 scope / scope add X    view or extend the authorized scope
@@ -111,6 +135,28 @@ With Ollama running you can also speak naturally
 Copy `config.example.yaml` to `./config.yaml` or `~/.ghostops/config.yaml` and
 edit the model, tool timeouts, and safety toggles. Safety defaults:
 `confirm_before_run: true` and `enforce_scope: true`.
+
+---
+
+## Antivirus (Windows dev only)
+
+The payload catalog contains real offensive one-liners, so **Windows Defender
+quarantines `ghostops/knowledge/payloads.yaml` the moment it hits disk** — and
+`ghostops generate` then reports "catalog not found". This does not affect
+Kali/WSL2, where the tool is meant to run and no such AV is present. If you
+develop on Windows, either:
+
+- work inside **WSL2/Kali** (recommended — the security tools are there too), or
+- ship the base64 form **`payloads.b64`** (carries no plaintext signatures; the
+  loader prefers it automatically), or
+- exclude the project directory from Defender (elevated PowerShell, one time):
+
+  ```powershell
+  Add-MpPreference -ExclusionPath "C:\path\to\GhostOps"
+  ```
+
+  An exclusion is worth it regardless: Defender also flags searchsploit hits,
+  sqlmap, and hydra output during normal use.
 
 ---
 

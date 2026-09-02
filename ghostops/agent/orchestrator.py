@@ -29,6 +29,11 @@ from ghostops.tools.registry import build_registry, tool_catalog
 
 console = Console()
 
+# Payload categories usable as bare REPL verbs (revshell, webshell, ...).
+_PAYLOAD_CATEGORIES = frozenset(
+    ("revshell", "bindshell", "webshell", "listener", "tty", "privesc")
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -152,6 +157,14 @@ class Orchestrator:
             )
         if low.startswith("scope"):
             return self._handle_scope(text)
+        if low in ("payloads", "/payloads") or low.startswith("payloads "):
+            return self._show_payloads(text)
+        # payload categories are usable as bare verbs: "revshell python3 ..."
+        first, _, rest = text.partition(" ")
+        if first.lower() == "generate":
+            first, _, rest = rest.strip().partition(" ")
+        if first.lower() in _PAYLOAD_CATEGORIES:
+            return self._handle_generate(first.lower(), rest.strip())
 
         # ---- LLM routing (or offline fallback) ----
         if self._llm_ok:
@@ -418,6 +431,73 @@ class Orchestrator:
             f"([dim]scope add <ip/cidr/host>[/dim])"
         )
 
+    # ----------------------------------------------------------- payloads
+    def _payloads_ready(self) -> bool:
+        from ghostops.payloads.generator import catalog_available
+        if catalog_available():
+            return True
+        console.print(
+            "[yellow]Payload catalog not on disk.[/yellow] It is quarantined "
+            "by host AV (Defender) in plaintext form. Ship payloads.b64, add "
+            "an AV exclusion, or run on Kali/WSL. See 'help'."
+        )
+        return False
+
+    def _show_payloads(self, text: str) -> None:
+        if not self._payloads_ready():
+            return
+        from ghostops.payloads.display import show_catalog
+        parts = text.split()
+        category = parts[1] if len(parts) > 1 else None
+        show_catalog(console, category)
+
+    def _handle_generate(self, category: str, args_text: str) -> None:
+        if not self._payloads_ready():
+            return
+        from ghostops.payloads.display import show_payload
+        from ghostops.payloads.generator import (
+            DEFAULT_PAYLOAD, PayloadError, generate,
+        )
+        toks = args_text.split()
+        encode = False
+        if toks and toks[-1] in ("enc", "encode", "--encode"):
+            encode, toks = True, toks[:-1]
+        name = toks[0] if toks else DEFAULT_PAYLOAD.get(category)
+        if not name:
+            return self._show_payloads(f"payloads {category}")
+        rest = toks[1:]
+
+        lhost = lport = ""
+        param = "cmd"
+        if category == "revshell" and len(rest) >= 2:
+            lhost, lport = rest[0], rest[1]
+        elif category == "bindshell" and rest:
+            lport = rest[0]
+        elif category == "listener" and rest:
+            lport = rest[0]
+            if len(rest) > 1:
+                lhost = rest[1]
+        elif category == "webshell" and rest:
+            param = rest[0]
+
+        try:
+            p = generate(category, name, lhost=lhost, lport=lport,
+                         param=param, encode=encode)
+        except PayloadError as exc:
+            console.print(f"[red]{exc}[/red]")
+            console.print(f"[dim]list options:[/dim] payloads {category}")
+            return
+
+        show_payload(console, p, stealth=self.e.stealth)
+        if self.e.stealth and p.noise == "high":
+            console.print(
+                f"[red]stealth:[/red] {p.ref} is HIGH noise. "
+                f"See 'payloads {category}' for quieter options."
+            )
+        self._log("payload",
+                  f"generated {p.ref}" + (" (encoded)" if encode else ""),
+                  p.name)
+
     # -------------------------------------------------------------- helps
     def _help(self) -> None:
         console.print(Panel(
@@ -427,6 +507,11 @@ class Orchestrator:
             "  searchsploit <terms>  search ExploitDB for exploits\n"
             "  sqlmap <url>          test a URL for SQL injection\n"
             "  hydra <tgt> <svc> <user> <passlist>   brute-force a login\n"
+            "  payloads [category]   browse the payload catalog\n"
+            "  revshell <name> <lhost> <lport> [enc] reverse shell\n"
+            "  webshell <name> [param]               web shell\n"
+            "  listener <name> <lport>               attacker-side listener\n"
+            "  tty / privesc <name>  post-exploitation helpers\n"
             "  what do we know       full engagement summary\n"
             "  next                  suggested next steps\n"
             "  scope / scope add X   view or extend scope\n"

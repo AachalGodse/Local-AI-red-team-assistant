@@ -82,6 +82,71 @@ def engagements():
 
 
 @app.command()
+def generate(
+    category: str = typer.Argument(
+        None, help="revshell | bindshell | webshell | listener | tty | privesc"
+    ),
+    name: str = typer.Argument(None, help="specific payload key, e.g. 'python3'"),
+    lhost: str = typer.Option("", "-l", "--lhost", help="listener/callback host"),
+    lport: str = typer.Option("", "-p", "--lport", help="listener/callback port"),
+    shell: str = typer.Option("/bin/bash", "--shell", help="shell to spawn"),
+    param: str = typer.Option("cmd", "--param", help="web-shell request param"),
+    encode: bool = typer.Option(False, "--encode", help="base64-wrap the payload"),
+    list_only: bool = typer.Option(False, "--list", help="list payloads and exit"),
+):
+    """Generate a curated offensive payload (reverse shell, web shell, etc.)."""
+    from ghostops.payloads.display import show_catalog, show_payload
+    from ghostops.payloads.generator import (
+        DEFAULT_PAYLOAD, PayloadError, catalog_available, categories, generate,
+    )
+
+    if not catalog_available():
+        console.print(Panel(
+            "[red]Payload catalog not found on disk.[/red]\n\n"
+            "The plaintext catalog is quarantined on sight by host antivirus "
+            "(e.g. Windows Defender). Fix by one of:\n"
+            "  - ship the base64 form [cyan]payloads.b64[/cyan] "
+            "(carries no signatures), or\n"
+            "  - add an AV exclusion for the project directory, then restore "
+            "[cyan]payloads.yaml[/cyan], or\n"
+            "  - install/run GhostOps on Kali/WSL (no Defender).",
+            border_style="red", title="Payloads",
+        ))
+        raise typer.Exit(1)
+
+    if category is None:
+        show_catalog(console)
+        console.print("\n[dim]Categories:[/dim] " + ", ".join(categories()))
+        console.print("[dim]e.g.[/dim] ghostops generate revshell python3 "
+                      "-l 10.10.14.5 -p 4444")
+        return
+    if category not in categories():
+        console.print(f"[red]Unknown category:[/red] {category}. "
+                      f"Choose from: {', '.join(categories())}")
+        raise typer.Exit(1)
+
+    # No specific payload chosen: fall back to the category default only when
+    # the user clearly wants one rendered (gave -l/-p); otherwise just list.
+    if name is None:
+        if list_only or not (lhost or lport):
+            return show_catalog(console, category)
+        name = DEFAULT_PAYLOAD.get(category)
+        if name:
+            console.print(f"[dim]no payload named; using default "
+                          f"'{category}/{name}'[/dim]")
+    if list_only:
+        return show_catalog(console, category)
+
+    try:
+        p = generate(category, name, lhost=lhost, lport=lport,
+                     shell=shell, param=param, encode=encode)
+    except PayloadError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    show_payload(console, p)
+
+
+@app.command()
 def setup():
     """First-run setup - check tools, models, and config."""
     from ghostops.setup_wizard import run_setup
