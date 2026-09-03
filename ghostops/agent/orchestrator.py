@@ -58,7 +58,10 @@ class Orchestrator:
             engagement.scope, enforce=cfg.get("safety.enforce_scope", True)
         )
         self.confirm_before_run = cfg.get("safety.confirm_before_run", True)
-        self._llm_ok = self.llm.available()
+        # AI mode requires BOTH: Ollama reachable AND the router model pulled.
+        # If the model is missing we drop cleanly into the deterministic offline
+        # router instead of erroring on the first request.
+        self._llm_ok = self.llm.available() and self.llm.has_model()
 
     # ---------------------------------------------------------------- log
     def _log(self, kind: str, summary: str, detail: str = "") -> None:

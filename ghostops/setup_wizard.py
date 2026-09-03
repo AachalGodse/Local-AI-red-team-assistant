@@ -48,13 +48,17 @@ def run_setup() -> None:
 
     console.print("\n[bold]LLM (Ollama)[/bold]")
     llm = LLMClient(cfg.get("llm.model"), cfg.get("llm.host"))
+    console.print(f"  Active router model (config): [green]{llm.model}[/green]  "
+                  f"[dim](routing/reasoning only - never payloads)[/dim]")
     if llm.available():
         console.print(f"  [green]Ollama reachable[/green] at {llm.host}")
         if llm.has_model():
-            console.print(f"  [green]Model ready:[/green] {llm.model}")
+            console.print(f"  [green]Model ready:[/green] {llm.model}  "
+                          f"[dim]-> AI routing mode[/dim]")
         else:
             console.print(f"  [yellow]Pull the model:[/yellow] "
-                          f"ollama pull {llm.model}")
+                          f"ollama pull {llm.model}  "
+                          f"[dim](until then: offline router)[/dim]")
     else:
         console.print(f"  [red]Ollama not reachable[/red] at {llm.host}")
         console.print("  Install: https://ollama.com  then: "

@@ -3,13 +3,18 @@
 # then these built-in defaults.
 
 llm:
-  # Ollama model to use. dolphin-mistral (7B) is the recommended default.
-  # No GPU? Try "phi3:mini" (CPU-friendly).
+  # Router / reasoning model — does tool routing and next-step reasoning ONLY,
+  # never payload generation. dolphin-mistral (7B) is the recommended default.
+  # No GPU? Try "phi3:mini" (CPU-friendly). Swap freely; it's optional.
   model: dolphin-mistral
+  # Embedding model for semantic memory (RAG). Pull with:
+  #   ollama pull nomic-embed-text
+  embed_model: nomic-embed-text
   host: http://localhost:11434
   temperature: 0.4
-  # If Ollama is unreachable, GhostOps runs in offline mode (manual commands
-  # still work; only the AI reasoning is disabled).
+  # If Ollama or the model is unreachable, GhostOps runs in offline mode
+  # (manual commands still work; only the AI reasoning is disabled).
+  # Check what's active any time with:  ghostops model
 
 engagements:
   # Where engagement databases are stored.

@@ -10,7 +10,14 @@ import yaml
 
 DEFAULTS: dict[str, Any] = {
     "llm": {
+        # Router / reasoning model. Does tool routing and next-step reasoning
+        # ONLY - never payload generation. Swappable: change this one line to
+        # use any Ollama model; if it's unreachable GhostOps falls back to the
+        # deterministic offline router.
         "model": "dolphin-mistral",
+        # Embedding model for semantic memory (RAG). Inert until that feature
+        # is enabled; pulled with `ollama pull nomic-embed-text`.
+        "embed_model": "nomic-embed-text",
         "host": "http://localhost:11434",
         "temperature": 0.4,
     },

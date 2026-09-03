@@ -191,6 +191,43 @@ def attack():
 
 
 @app.command()
+def model():
+    """Show which LLM is active and whether GhostOps will run in AI or offline mode."""
+    from ghostops.ai.llm_client import LLMClient
+    from ghostops.config import load_config
+    cfg = load_config()
+    host = cfg.get("llm.host", "http://localhost:11434")
+    router = cfg.get("llm.model", "dolphin-mistral")
+    embed = cfg.get("llm.embed_model", "nomic-embed-text")
+
+    client = LLMClient(model=router, host=host)
+    reachable = client.available()
+    router_pulled = reachable and client.has_model()
+    embed_pulled = reachable and LLMClient(model=embed, host=host).has_model()
+    # AI routing needs the server up AND the router model pulled; otherwise the
+    # deterministic offline router takes over.
+    mode = ("[green]AI routing[/green]" if router_pulled
+            else "[yellow]OFFLINE (deterministic router)[/yellow]")
+
+    def yn(ok: bool) -> str:
+        return "[green]yes[/green]" if ok else "[red]no[/red]"
+
+    console.print(Panel(
+        f"Host:          [cyan]{host}[/cyan]  (reachable: {yn(reachable)})\n"
+        f"Router model:  [green]{router}[/green]  (pulled: {yn(router_pulled)})\n"
+        f"Embed model:   [green]{embed}[/green]  (pulled: {yn(embed_pulled)})  "
+        f"[dim]# for RAG[/dim]\n"
+        f"Active mode:   {mode}",
+        title="Active model", border_style="red",
+    ))
+    if not reachable:
+        console.print("[dim]Start Ollama, or run offline - commands still "
+                      "work. Install: https://ollama.com[/dim]")
+    elif not router_pulled:
+        console.print(f"[dim]Pull the router model:[/dim] ollama pull {router}")
+
+
+@app.command()
 def setup():
     """First-run setup - check tools, models, and config."""
     from ghostops.setup_wizard import run_setup
