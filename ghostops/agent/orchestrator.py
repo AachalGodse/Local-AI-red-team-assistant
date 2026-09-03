@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -24,6 +25,7 @@ from ghostops.agent.scope_guard import ScopeGuard
 from ghostops.config import Config, load_config
 from ghostops.models import ActivityLog, Engagement, Phase, Severity
 from ghostops.memory.store import EngagementStore
+from ghostops.memory.vector_store import VectorMemory
 from ghostops.tools.base_tool import ToolResult
 from ghostops.tools.registry import build_registry, tool_catalog
 
@@ -62,6 +64,15 @@ class Orchestrator:
         # If the model is missing we drop cleanly into the deterministic offline
         # router instead of erroring on the first request.
         self._llm_ok = self.llm.available() and self.llm.has_model()
+
+        # Optional semantic memory (RAG). Augments SQLite, never replaces it.
+        # No-op if chromadb isn't installed or the embed model isn't pulled.
+        self._embed_model = cfg.get("llm.embed_model", "nomic-embed-text")
+        chroma_path = Path(str(self.store.path)).with_suffix(".chroma")
+        self.vec = VectorMemory(
+            engagement.id, chroma_path,
+            embed_fn=lambda t: self.llm.embed(t, model=self._embed_model),
+        )
 
     # ---------------------------------------------------------------- log
     def _log(self, kind: str, summary: str, detail: str = "") -> None:
@@ -141,6 +152,8 @@ class Orchestrator:
             return self._handle_checklist(text)
         if low in ("attack", "mitre", "att&ck", "/attack", "/mitre"):
             return self._show_attack()
+        if low.startswith("recall ") or low in ("recall", "/recall"):
+            return self._recall(text)
         if low.startswith("scan "):
             target = text[5:].strip()
             profile = "stealth" if self.e.stealth else "default"
@@ -322,6 +335,10 @@ class Orchestrator:
             self._log("phase", f"{old.value} -> {target.value}", "auto-advance")
             console.print(f"[magenta]phase -> {target.value}[/magenta]")
 
+        # mirror new findings into semantic memory (best-effort, never fatal)
+        if result.findings and self.vec.available():
+            self.vec.add_findings(result.findings)
+
         self._render_result(result)
         if self._llm_ok:
             self._brief(result)
@@ -488,6 +505,68 @@ class Orchestrator:
             t.add_row(tech.tactic, tech.id, tech.name, ", ".join(prov))
         console.print(t)
 
+    # ------------------------------------------------------------- recall
+    def _recall(self, text: str) -> None:
+        question = text.split(" ", 1)[1].strip() if " " in text else ""
+        if not question:
+            console.print("usage: recall <question>   "
+                          "e.g. recall what did we find on the web servers")
+            return
+        # graceful degradation, each with the exact fix
+        if not self.vec.available():
+            console.print(
+                "[yellow]Semantic recall needs ChromaDB.[/yellow] Install it: "
+                "[cyan]pip install chromadb[/cyan]  (or  pip install -e '.[rag]')."
+            )
+            return
+        if not (self.llm.available() and self.llm.has_model(self._embed_model)):
+            console.print(
+                f"[yellow]Embed model unavailable.[/yellow] Pull it: "
+                f"[cyan]ollama pull {self._embed_model}[/cyan] (Ollama must run)."
+            )
+            return
+        # ensure everything discovered is indexed (covers resume / late enable)
+        if self.vec.count() < len(self.e.findings):
+            self.vec.add_findings(self.e.findings)
+
+        hits = self.vec.query(question, k=5)
+        if not hits:
+            console.print("[dim]Nothing relevant in memory yet. "
+                          "Run some tools first.[/dim]")
+            return
+        t = Table(title=f"Recall - {question}")
+        t.add_column("#", style="cyan", justify="right")
+        t.add_column("Finding", style="green")
+        t.add_column("Where", style="dim")
+        for i, h in enumerate(hits, 1):
+            meta = h.get("metadata", {})
+            where = meta.get("host", "") or ""
+            if meta.get("port"):
+                where += f":{meta['port']}"
+            title = meta.get("title") or (h.get("document") or "")[:70]
+            t.add_row(str(i), title, where)
+        console.print(t)
+        # In AI mode, let the model summarize the retrieved findings. This is
+        # reasoning over grounded data - it never generates payloads.
+        if self._llm_ok:
+            self._recall_summary(question, hits)
+
+    def _recall_summary(self, question: str, hits: list[dict]) -> None:
+        ctx = "\n".join(f"- {h.get('document', '')}" for h in hits)
+        try:
+            answer = self.llm.chat([
+                {"role": "system", "content":
+                    "You are GhostOps. Using ONLY the retrieved findings below, "
+                    "answer the operator's question about this engagement. Be "
+                    "concise. Never invent hosts, ports, versions, or exploits."
+                    "\n\nRetrieved findings:\n" + ctx},
+                {"role": "user", "content": question},
+            ])
+            console.print(Panel(answer, border_style="blue",
+                                title="Recall summary"))
+        except Exception as exc:
+            console.print(f"[dim]summary unavailable: {exc}[/dim]")
+
     # -------------------------------------------------------------- scope
     def _handle_scope(self, text: str) -> None:
         parts = text.split()
@@ -589,6 +668,7 @@ class Orchestrator:
             "  tty / privesc <name>  post-exploitation helpers\n"
             "  checklist [service]   per-service enumeration methodology\n"
             "  attack / mitre        ATT&CK techniques exercised so far\n"
+            "  recall <question>     semantic search of past findings (RAG)\n"
             "  what do we know       full engagement summary\n"
             "  next                  suggested next steps\n"
             "  scope / scope add X   view or extend scope\n"

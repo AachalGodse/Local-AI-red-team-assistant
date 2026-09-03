@@ -9,4 +9,5 @@ venv/
 # local config + engagement data (may contain target info — keep out of git)
 config.yaml
 engagements/*.db
+engagements/*.chroma/
 report*.md

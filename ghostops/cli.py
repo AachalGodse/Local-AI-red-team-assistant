@@ -191,6 +191,67 @@ def attack():
 
 
 @app.command()
+def recall(
+    question: str = typer.Argument(..., help="natural-language question"),
+    engagement_id: str = typer.Argument("last", help="Engagement ID or 'last'"),
+):
+    """Semantic search over an engagement's findings (RAG). Needs ChromaDB + embed model."""
+    from pathlib import Path
+    from rich.table import Table
+    from ghostops.ai.llm_client import LLMClient
+    from ghostops.config import load_config
+    from ghostops.memory.store import EngagementStore, list_engagements
+    from ghostops.memory.vector_store import VectorMemory, chromadb_available
+
+    cfg = load_config()
+    eng_dir = cfg.get("engagements.dir", "./engagements")
+    if not chromadb_available():
+        console.print("[yellow]Semantic recall needs ChromaDB.[/yellow] "
+                      "Install: [cyan]pip install chromadb[/cyan]")
+        raise typer.Exit(1)
+    if engagement_id == "last":
+        items = list_engagements(eng_dir)
+        if not items:
+            console.print("[yellow]No engagements found.[/yellow]")
+            raise typer.Exit(1)
+        engagement_id = sorted(items, key=lambda x: x["created_at"])[-1]["id"]
+    store = EngagementStore(f"{eng_dir}/{engagement_id}.db")
+    e = store.load()
+    if e is None:
+        console.print(f"[red]Engagement not found:[/red] {engagement_id}")
+        raise typer.Exit(1)
+
+    host = cfg.get("llm.host", "http://localhost:11434")
+    embed = cfg.get("llm.embed_model", "nomic-embed-text")
+    llm = LLMClient(model=embed, host=host)
+    if not (llm.available() and llm.has_model(embed)):
+        console.print(f"[yellow]Embed model unavailable.[/yellow] "
+                      f"Pull it: [cyan]ollama pull {embed}[/cyan]")
+        raise typer.Exit(1)
+
+    vec = VectorMemory(e.id, Path(f"{eng_dir}/{engagement_id}.chroma"),
+                       embed_fn=lambda t: llm.embed(t, model=embed))
+    if vec.count() < len(e.findings):
+        vec.add_findings(e.findings)
+    hits = vec.query(question, k=5)
+    if not hits:
+        console.print("[dim]No relevant findings recorded.[/dim]")
+        return
+    t = Table(title=f"Recall - {question}")
+    t.add_column("#", style="cyan", justify="right")
+    t.add_column("Finding", style="green")
+    t.add_column("Where", style="dim")
+    for i, h in enumerate(hits, 1):
+        meta = h.get("metadata", {})
+        where = (meta.get("host", "") or "")
+        if meta.get("port"):
+            where += f":{meta['port']}"
+        t.add_row(str(i), meta.get("title") or (h.get("document") or "")[:70],
+                  where)
+    console.print(t)
+
+
+@app.command()
 def model():
     """Show which LLM is active and whether GhostOps will run in AI or offline mode."""
     from ghostops.ai.llm_client import LLMClient

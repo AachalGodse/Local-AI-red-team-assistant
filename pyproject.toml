@@ -19,6 +19,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Semantic memory (RAG). Optional: GhostOps runs fully without it; `recall`
+# just reports it's missing. Install with:  pip install -e '.[rag]'
+rag = ["chromadb>=0.5"]
 
 [project.scripts]
 ghostops = "ghostops.cli:app"

@@ -31,8 +31,11 @@ This is the reliable core the rest builds on. Implemented and tested:
   (16 services) that also drives the `next` suggestions
 - ✅ **MITRE ATT&CK mapping** — actions (tools, payloads) map to ATT&CK
   techniques; the report gains an ATT&CK section
+- ✅ **Semantic memory (RAG)** — optional ChromaDB + `nomic-embed-text`
+  embeddings; `recall <question>` finds past findings by meaning. Augments the
+  SQLite memory, never replaces it; fully optional (degrades cleanly if absent)
 
-Not yet built (roadmap): RAG (vector) memory. See `GhostOps_Plan.md`.
+The roadmap in `GhostOps_Plan.md` is now fully implemented.
 
 > **Payloads are curated, not model-generated.** GhostOps ships a reviewed
 > catalog (`ghostops/knowledge/payloads.yaml`) rather than asking the LLM to
@@ -110,6 +113,8 @@ ghostops generate listener nc -p 4444
 ghostops checklist                             # list services with checklists
 ghostops checklist smb                         # enumeration steps for SMB
 ghostops attack                                # action -> MITRE ATT&CK map
+ghostops model                                 # which LLM is active (AI/offline)
+ghostops recall "what web servers did we find" # semantic search (RAG)
 ```
 
 Inside an engagement (REPL):
@@ -127,6 +132,7 @@ listener <name> <lport>                 attacker-side listener
 tty / privesc <name>   post-exploitation helpers
 checklist [service]    per-service enumeration methodology
 attack / mitre         ATT&CK techniques exercised so far
+recall <question>      semantic search of past findings (RAG)
 what do we know        full engagement summary
 next                   suggested next steps from discovered services
 scope / scope add X    view or extend the authorized scope
@@ -143,7 +149,34 @@ With Ollama running you can also speak naturally
 
 Copy `config.example.yaml` to `./config.yaml` or `~/.ghostops/config.yaml` and
 edit the model, tool timeouts, and safety toggles. Safety defaults:
-`confirm_before_run: true` and `enforce_scope: true`.
+`confirm_before_run: true` and `enforce_scope: true`. Two models are configured
+under `llm`: `model` (the **router/reasoning** model — never generates payloads)
+and `embed_model` (embeddings for RAG). Run `ghostops model` to see which is
+active and whether you're in AI or offline mode.
+
+---
+
+## Semantic memory / RAG (optional)
+
+On top of the structured SQLite memory, GhostOps can index findings into a
+vector store so you can ask questions by **meaning**:
+
+```bash
+recall what did we find on the web servers      # inside the REPL
+ghostops recall "weak credentials" last          # from the shell
+```
+
+It's fully optional — install only if you want it:
+
+```bash
+pip install -e '.[rag]'          # ChromaDB
+ollama pull nomic-embed-text     # the embedding model
+```
+
+Without either, GhostOps runs exactly as before and `recall` tells you what's
+missing. RAG **augments** the SQLite memory (still the source of truth) — it
+never replaces it, and the model only *reasons over* retrieved findings, never
+invents them.
 
 ---
 

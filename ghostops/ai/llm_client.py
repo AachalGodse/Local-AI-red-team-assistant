@@ -31,11 +31,13 @@ class LLMClient:
             self._available = False
         return self._available
 
-    def has_model(self) -> bool:
+    def has_model(self, model: str | None = None) -> bool:
+        """Is `model` (default: this client's router model) pulled in Ollama?"""
+        want = (model or self.model).split(":")[0]
         try:
             r = requests.get(f"{self.host}/api/tags", timeout=3)
             names = [m.get("name", "") for m in r.json().get("models", [])]
-            return any(self.model.split(":")[0] in n for n in names)
+            return any(want in n for n in names)
         except Exception:
             return False
 
@@ -71,3 +73,16 @@ class LLMClient:
                     pass
             return {"action": "respond",
                     "message": raw or "(no response from model)"}
+
+    # ------------------------------------------------------------ embeddings
+    def embed(self, text: str, model: str | None = None) -> list[float]:
+        """Return an embedding vector for `text` from Ollama's embed model.
+
+        `model` defaults to this client's model; for RAG pass the configured
+        embed model (e.g. nomic-embed-text). Raises on transport/HTTP error so
+        callers can degrade gracefully.
+        """
+        payload = {"model": model or self.model, "prompt": text}
+        r = requests.post(f"{self.host}/api/embeddings", json=payload, timeout=60)
+        r.raise_for_status()
+        return r.json().get("embedding", []) or []
