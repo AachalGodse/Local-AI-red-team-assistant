@@ -2,8 +2,7 @@
 typer>=0.12.0
 rich>=13.0
 pyyaml>=6.0
-jinja2>=3.1
 requests>=2.31
-# Ollama python client (LLM runtime). Optional at dev time — GhostOps
-# degrades to offline mode if Ollama isn't reachable.
-ollama>=0.4.0
+# Note: GhostOps talks to Ollama over its HTTP API via `requests`, so the
+# `ollama` python client is NOT required. Reporting is plain-string Markdown,
+# so `jinja2` isn't needed either. Both were dropped to keep deps minimal.

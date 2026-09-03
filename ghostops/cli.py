@@ -21,7 +21,7 @@ console = Console()
 @app.command()
 def engage(
     target: str = typer.Argument(..., help="Target IP, CIDR, or hostname"),
-    model: str = typer.Option("dolphin-mistral", help="Ollama model to use"),
+    model: str = typer.Option(None, help="Ollama model (default: config llm.model)"),
     stealth: bool = typer.Option(False, help="Enable OPSEC-safe (quieter) mode"),
 ):
     """Start a new engagement against a target."""
@@ -30,7 +30,9 @@ def engage(
 
 
 @app.command()
-def shell(model: str = typer.Option("dolphin-mistral", help="Ollama model")):
+def shell(
+    model: str = typer.Option(None, help="Ollama model (default: config llm.model)"),
+):
     """Open free-form chat with the red team AI (scope = *)."""
     from ghostops.agent.orchestrator import start_shell
     start_shell(model)
@@ -48,7 +50,7 @@ def resume(
 @app.command()
 def report(
     engagement_id: str = typer.Argument("last", help="Engagement ID or 'last'"),
-    output: str = typer.Option("report.md", "-o", help="Output file path"),
+    output: str = typer.Option("report.md", "-o", "--output", help="Output file path"),
 ):
     """Generate a markdown pentest report from engagement data."""
     from ghostops.report.generator import generate_report

@@ -22,7 +22,7 @@ from ghostops.ai.llm_client import LLMClient
 from ghostops.ai.prompts import PERSONA, ROUTER_SYSTEM, SUMMARIZE_SYSTEM
 from ghostops.agent.scope_guard import ScopeGuard
 from ghostops.config import Config, load_config
-from ghostops.models import ActivityLog, Engagement, Phase
+from ghostops.models import ActivityLog, Engagement, Phase, Severity
 from ghostops.memory.store import EngagementStore
 from ghostops.tools.base_tool import ToolResult
 from ghostops.tools.registry import build_registry, tool_catalog
@@ -75,10 +75,11 @@ class Orchestrator:
             else "[yellow]OFFLINE (no Ollama) - commands only[/yellow]"
         )
         c = self.e.counts()
+        stealth = "  [yellow]STEALTH[/yellow]" if self.e.stealth else ""
         console.print(Panel(
             f"[bold red]GhostOps[/bold red] - engagement [cyan]{self.e.id}[/cyan]\n"
             f"Scope:    [cyan]{', '.join(self.e.scope) or '(none)'}[/cyan]\n"
-            f"Phase:    [magenta]{self.e.phase.value}[/magenta]\n"
+            f"Phase:    [magenta]{self.e.phase.value}[/magenta]{stealth}\n"
             f"Model:    [green]{self.e.model}[/green]   {mode}\n"
             f"Findings: {c['hosts']} hosts | {c['ports']} ports | "
             f"{c['findings']} findings | {c['creds']} creds",
@@ -139,8 +140,9 @@ class Orchestrator:
             return self._show_attack()
         if low.startswith("scan "):
             target = text[5:].strip()
+            profile = "stealth" if self.e.stealth else "default"
             return self._execute_tool(
-                "nmap", {"target": target, "profile": "default"}
+                "nmap", {"target": target, "profile": profile}
             )
         if low.startswith("gobuster "):
             return self._execute_tool("gobuster", {"url": text[9:].strip()})
@@ -302,9 +304,20 @@ class Orchestrator:
             f"dur={result.duration}s",
         )
 
-        # phase progression: a productive scan moves us forward
-        if result.hosts and self.e.phase.order < Phase.ENUMERATION.order:
-            self.e.phase = Phase.ENUMERATION
+        # phase progression, driven by what the tool actually produced.
+        # Never moves backward (we take the furthest phase reached).
+        target = self.e.phase
+        if result.hosts:
+            target = max(target, Phase.ENUMERATION, key=lambda p: p.order)
+        if any(f.severity.rank >= Severity.HIGH.rank for f in result.findings):
+            target = max(target, Phase.EXPLOITATION, key=lambda p: p.order)
+        if result.credentials:
+            target = max(target, Phase.POST_EXPLOITATION, key=lambda p: p.order)
+        if target.order != self.e.phase.order:
+            old = self.e.phase
+            self.e.phase = target
+            self._log("phase", f"{old.value} -> {target.value}", "auto-advance")
+            console.print(f"[magenta]phase -> {target.value}[/magenta]")
 
         self._render_result(result)
         if self._llm_ok:
@@ -618,7 +631,7 @@ def _store_for(cfg: Config, engagement_id: str) -> EngagementStore:
     return EngagementStore(f"{eng_dir}/{engagement_id}.db")
 
 
-def start_engagement(target: str, model: str = "dolphin-mistral",
+def start_engagement(target: str, model: str | None = None,
                      stealth: bool = False) -> None:
     cfg = load_config()
     eid = _new_id()
@@ -632,7 +645,7 @@ def start_engagement(target: str, model: str = "dolphin-mistral",
     Orchestrator(cfg, e, store).run()
 
 
-def start_shell(model: str = "dolphin-mistral") -> None:
+def start_shell(model: str | None = None) -> None:
     """Free-form chat / scratch engagement (wildcard scope)."""
     cfg = load_config()
     eid = _new_id()
