@@ -14,6 +14,8 @@ tools:
     - {tactic: Reconnaissance, id: T1595.001, name: "Active Scanning: Scanning IP Blocks"}
   gobuster:
     - {tactic: Reconnaissance, id: T1595.003, name: "Active Scanning: Wordlist Scanning"}
+  nikto:
+    - {tactic: Reconnaissance, id: T1595.002, name: "Active Scanning: Vulnerability Scanning"}
   searchsploit:
     - {tactic: Resource Development, id: T1588.005, name: "Obtain Capabilities: Exploits"}
   sqlmap:

@@ -59,6 +59,9 @@ class NmapTool(BaseTool):
         if not ok:
             return ok, msg
         target = str(args.get("target", "")).strip()
+        if "://" in target:
+            return False, (f"target must be a host/IP, not a URL: {target!r} "
+                           f"(scan the host; use web tools for the URL)")
         if not _TARGET_RE.match(target):
             return False, f"invalid target token: {target!r}"
         ports = str(args.get("ports", "")).strip()

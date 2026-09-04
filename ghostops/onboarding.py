@@ -96,7 +96,8 @@ def welcome(console: Console) -> None:
         ("ghostops help", "show this screen"),
     ]
     repl_cmds = [
-        ("scan <target>", "run an nmap scan (in-scope only)"),
+        ("scan <target>", "nmap scan (IP/host; a URL routes to the web tools)"),
+        ("gobuster / nikto <url>", "enumerate + vuln-scan a web target"),
         ("next", "numbered menu of next steps - pick by number"),
         ("what do we know", "full engagement summary"),
     ]

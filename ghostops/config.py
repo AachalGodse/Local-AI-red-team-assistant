@@ -33,6 +33,7 @@ DEFAULTS: dict[str, Any] = {
         "searchsploit": {"timeout": 120},
         "sqlmap": {"timeout": 900},
         "hydra": {"timeout": 900},
+        "nikto": {"timeout": 900},
     },
     "safety": {
         "confirm_before_run": True,

@@ -37,6 +37,9 @@ def test_nmap_build_command_profiles():
     assert ok
     bad, _ = t.validate_args({"target": "10.0.0.5; rm -rf /"})
     assert not bad
+    # a URL must never reach nmap - it's rejected up front
+    url_bad, _ = t.validate_args({"target": "https://example.com/path"})
+    assert not url_bad
 
 
 def test_nmap_parse_xml():
@@ -69,6 +72,7 @@ def test_store_roundtrip_and_report():
         e.upsert_host(h)
         e.add_finding(Finding(title="ssh exposed", severity=Severity.LOW,
                               host="10.0.0.5", port=22, source="nmap"))
+        e.add_web_target("https://10.0.0.5/app")
         store = EngagementStore(path)
         store.save(e)
         store.close()
@@ -78,6 +82,7 @@ def test_store_roundtrip_and_report():
         assert loaded is not None
         assert loaded.hosts[0].services[0].version == "8.2p1"
         assert loaded.findings[0].title == "ssh exposed"
+        assert "https://10.0.0.5/app" in loaded.web_targets   # persisted
 
         md = render_markdown(loaded)
         assert "Penetration Test Report" in md

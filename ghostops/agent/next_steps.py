@@ -69,13 +69,17 @@ def build_actions(engagement: Engagement, registry: dict) -> list[Action]:
             host, port, name = h.ip, s.port, (s.name or "")
             banner = s.banner.strip()
 
-            # web -> gobuster (content enumeration)
+            # web -> gobuster (enum) + nikto (vuln scan, intrusive)
             if _is_web(name, port):
                 scheme = ("https" if port in (443, 8443) or "https" in name
                           or "ssl" in name else "http")
+                url = f"{scheme}://{host}:{port}"
                 add(Action(
                     label=f"Enumerate web content on {host}:{port} (gobuster)",
-                    tool="gobuster", args={"url": f"{scheme}://{host}:{port}"}))
+                    tool="gobuster", args={"url": url}))
+                add(Action(
+                    label=f"Scan web service on {host}:{port} for vulns (nikto)",
+                    tool="nikto", args={"url": url}, intrusive=True))
 
             # login service -> hydra (brute-force; intrusive; needs credentials)
             svc = _HYDRA_BY_NAME.get(name.lower()) or _HYDRA_BY_PORT.get(port)
@@ -92,6 +96,14 @@ def build_actions(engagement: Engagement, registry: dict) -> list[Action]:
                 add(Action(
                     label=f"Search exploits for '{banner}' on {host}:{port} (searchsploit)",
                     tool="searchsploit", args={"query": banner}))
+
+    # user-provided web targets (from `scan <url>` / `engage <url>`), persisted
+    # so the web tools stay offered even when nmap found no services on the host.
+    for url in getattr(engagement, "web_targets", []) or []:
+        add(Action(label=f"Enumerate web content on {url} (gobuster)",
+                   tool="gobuster", args={"url": url}))
+        add(Action(label=f"Scan {url} for web vulnerabilities (nikto)",
+                   tool="nikto", args={"url": url}, intrusive=True))
 
     # sqlmap: only when a PARAMETERISED URL already exists in memory (a finding
     # whose text carries http(s)://...?x=y). sqlmap needs a param to run, so we

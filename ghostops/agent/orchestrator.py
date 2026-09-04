@@ -23,6 +23,7 @@ from ghostops.ai.llm_client import LLMClient
 from ghostops.ai.prompts import PERSONA, RANK_SYSTEM, ROUTER_SYSTEM, SUMMARIZE_SYSTEM
 from ghostops.agent.next_steps import Action, QUIT, build_actions, resolve_choice
 from ghostops.agent.scope_guard import ScopeGuard
+from ghostops.agent.targets import normalize
 from ghostops.config import Config, load_config
 from ghostops.models import ActivityLog, Engagement, Phase, Severity
 from ghostops.memory.store import EngagementStore
@@ -174,13 +175,21 @@ class Orchestrator:
         if low.startswith("recall ") or low in ("recall", "/recall"):
             return self._recall(text)
         if low.startswith("scan "):
-            target = text[5:].strip()
+            t = normalize(text[5:].strip())
+            # A web URL: scan the HOST with nmap (never the URL), and record the
+            # URL so the web tools (gobuster/nikto) are offered in the menu.
+            if t.is_web and t.url:
+                self.e.add_web_target(t.url)
+                console.print(f"[dim]web target: {t.url} - scanning host "
+                              f"{t.host}; web tools will appear in the menu.[/dim]")
             profile = "stealth" if self.e.stealth else "default"
             return self._execute_tool(
-                "nmap", {"target": target, "profile": profile}
+                "nmap", {"target": t.host, "profile": profile}
             )
         if low.startswith("gobuster "):
             return self._execute_tool("gobuster", {"url": text[9:].strip()})
+        if low.startswith("nikto "):
+            return self._execute_tool("nikto", {"url": text[6:].strip()})
         if low.startswith("searchsploit ") or low.startswith("sploit "):
             return self._execute_tool(
                 "searchsploit", {"query": text.split(" ", 1)[1].strip()}
@@ -720,8 +729,9 @@ class Orchestrator:
     def _help(self) -> None:
         console.print(Panel(
             "[bold]Commands[/bold]\n"
-            "  scan <target>         run an nmap scan\n"
+            "  scan <target>         nmap scan (IP/host; URLs route to web tools)\n"
             "  gobuster <url>        brute-force web directories\n"
+            "  nikto <url>           web server vulnerability scan (noisy)\n"
             "  searchsploit <terms>  search ExploitDB for exploits\n"
             "  sqlmap <url>          test a URL for SQL injection\n"
             "  hydra <tgt> <svc> <user> <passlist>   brute-force a login\n"
@@ -782,11 +792,16 @@ def start_engagement(target: str, model: str | None = None,
                      stealth: bool = False) -> None:
     cfg = load_config()
     eid = _new_id()
+    # Normalize so the scope guard works on a bare host/IP even if the operator
+    # engaged with a full URL; keep the URL as a web target for the web tools.
+    t = normalize(target)
     e = Engagement(
-        id=eid, name=target, scope=[target], phase=Phase.RECON,
+        id=eid, name=target, scope=[t.host or target], phase=Phase.RECON,
         created_at=_now(), stealth=stealth,
         model=model or cfg.get("llm.model", "dolphin-mistral"),
     )
+    if t.is_web and t.url:
+        e.add_web_target(t.url)
     store = _store_for(cfg, eid)
     store.save(e)
     Orchestrator(cfg, e, store).run()

@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS activity (
     summary TEXT,
     detail TEXT
 );
+CREATE TABLE IF NOT EXISTS web_targets (
+    url TEXT PRIMARY KEY
+);
 """
 
 
@@ -97,7 +100,8 @@ class EngagementStore:
              e.created_at, int(e.stealth), e.model),
         )
         # Rebuild child tables from in-memory truth.
-        for tbl in ("hosts", "services", "findings", "credentials"):
+        for tbl in ("hosts", "services", "findings", "credentials",
+                    "web_targets"):
             c.execute(f"DELETE FROM {tbl}")
         for h in e.hosts:
             c.execute("INSERT OR REPLACE INTO hosts VALUES (?,?,?,?)",
@@ -117,6 +121,8 @@ class EngagementStore:
         for cr in e.credentials:
             c.execute("INSERT OR REPLACE INTO credentials VALUES (?,?,?,?,?)",
                       (cr.service, cr.host, cr.username, cr.secret, cr.source))
+        for u in e.web_targets:
+            c.execute("INSERT OR REPLACE INTO web_targets VALUES (?)", (u,))
         # Activity is append-only; sync any rows not yet persisted.
         c.execute("DELETE FROM activity")
         for a in e.activity:
@@ -175,6 +181,8 @@ class EngagementStore:
                 timestamp=ar["timestamp"], kind=ar["kind"],
                 summary=ar["summary"], detail=ar["detail"] or "",
             ))
+        for wr in self.conn.execute("SELECT url FROM web_targets"):
+            e.web_targets.append(wr["url"])
         return e
 
     def close(self) -> None:

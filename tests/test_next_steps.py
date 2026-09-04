@@ -116,3 +116,39 @@ def test_cancelling_input_prompt_returns_without_running(tmp_path, monkeypatch):
                         lambda *a, **k: ran.update(called=True))
     o._run_action(hyd)
     assert ran["called"] is False        # cancelled -> tool not run
+
+
+# ---- web target routing (Step: IP/URL normalization + nikto) ----
+
+def test_web_target_offers_gobuster_and_nikto():
+    e = Engagement(id="e", scope=["10.0.0.5"])
+    e.add_web_target("https://10.0.0.5/app")
+    acts = build_actions(e, REG)
+    tools = {a.tool for a in acts}
+    assert "gobuster" in tools and "nikto" in tools
+    nk = next(a for a in acts if a.tool == "nikto")
+    assert nk.intrusive and nk.args["url"] == "https://10.0.0.5/app"
+
+
+def test_nmap_empty_web_is_not_a_dead_end():
+    # no hosts/services discovered, but a web target is recorded -> the menu
+    # still offers the web path instead of dead-ending.
+    e = Engagement(id="e", scope=["10.0.0.5"])
+    e.add_web_target("http://10.0.0.5:8080/")
+    acts = build_actions(e, REG)
+    assert acts
+    assert any(a.tool in ("gobuster", "nikto") for a in acts)
+
+
+def test_nikto_menu_pick_still_hits_confirm(tmp_path, monkeypatch):
+    import ghostops.agent.orchestrator as orch
+    o = _orch(tmp_path)
+    o.e.add_web_target("http://10.0.0.5/")
+    nk = next(a for a in build_actions(o.e, o.tools) if a.tool == "nikto")
+    monkeypatch.setattr(o.tools["nikto"], "is_available", lambda: True)
+    monkeypatch.setattr(orch.Confirm, "ask", lambda *a, **k: False)   # user: NO
+    ran = {"called": False}
+    monkeypatch.setattr(o.tools["nikto"], "run",
+                        lambda *a, **k: ran.update(called=True))
+    o._run_action(nk)
+    assert ran["called"] is False        # intrusive -> confirm gate held

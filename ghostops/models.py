@@ -152,6 +152,14 @@ class Engagement:
     findings: list[Finding] = field(default_factory=list)
     credentials: list[Credential] = field(default_factory=list)
     activity: list[ActivityLog] = field(default_factory=list)
+    # Web target URLs the operator aimed at (from `scan <url>` / `engage <url>`).
+    # Persisted so the web tools (gobuster/nikto) stay offered across `resume`,
+    # even when nmap found no services on the host.
+    web_targets: list[str] = field(default_factory=list)
+
+    def add_web_target(self, url: str) -> None:
+        if url and url not in self.web_targets:
+            self.web_targets.append(url)
 
     # ---- host helpers ----
     def get_host(self, ip: str) -> Optional[Host]:

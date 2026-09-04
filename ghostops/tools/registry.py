@@ -5,6 +5,7 @@ from ghostops.config import Config
 from ghostops.tools.base_tool import BaseTool
 from ghostops.tools.gobuster_tool import GobusterTool
 from ghostops.tools.hydra_tool import HydraTool
+from ghostops.tools.nikto_tool import NiktoTool
 from ghostops.tools.nmap_tool import NmapTool
 from ghostops.tools.searchsploit_tool import SearchsploitTool
 from ghostops.tools.sqlmap_tool import SqlmapTool
@@ -30,6 +31,9 @@ def build_registry(cfg: Config) -> dict[str, BaseTool]:
     )
     reg["hydra"] = HydraTool(
         timeout=cfg.get("tools.hydra.timeout", 900),
+    )
+    reg["nikto"] = NiktoTool(
+        timeout=cfg.get("tools.nikto.timeout", 900),
     )
 
     return reg

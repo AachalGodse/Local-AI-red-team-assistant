@@ -26,7 +26,8 @@ def test_router_registry_never_exposes_payloads():
     # is NOT a routable tool, so the model can never be asked to make a payload.
     from ghostops.tools.registry import build_registry
     reg = build_registry(load_config())
-    assert set(reg) == {"nmap", "gobuster", "searchsploit", "sqlmap", "hydra"}
+    assert set(reg) == {"nmap", "gobuster", "searchsploit", "sqlmap", "hydra",
+                        "nikto"}
     for payload_category in ("revshell", "webshell", "bindshell",
                              "listener", "tty", "privesc"):
         assert payload_category not in reg
