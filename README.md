@@ -70,36 +70,51 @@ store, the summary, and the report are all just views over it.
 
 ---
 
-## Setup
+## Install
 
-GhostOps is written in Python and runs on Windows for development, but the
-security tools it drives (nmap, etc.) are Linux-native. **Recommended: run it
-inside WSL2 + Kali** so the tools are available.
+GhostOps runs on Linux (Kali/Debian or Fedora); the security tools it drives are
+Linux-native. On Windows, run it inside **WSL2 + Kali**.
 
-### 1. Python deps
+### Quick install (one command)
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/AachalGodse/Local-AI-red-team-assistant.git
+cd Local-AI-red-team-assistant
+bash install.sh           # system tools + pipx + ghostops + Ollama
+# bash install.sh --rag   # also install the RAG (semantic memory) extra
 ```
 
-### 2. Security tools (Kali / Debian / WSL2)
+The installer works on **apt (Kali/Debian)** and **dnf (Fedora)**, is safe to
+re-run, and puts a `ghostops` command on your PATH — **no venv to activate**.
+Open a new shell afterwards (or run `pipx ensurepath`).
+
+### Manual install (pipx)
 
 ```bash
-wsl --install -d kali-linux          # Windows: one-time WSL2 + Kali install
-sudo apt update
+pipx install .              # core
+pipx install ".[rag]"       # with semantic memory (RAG)
+```
+
+### System tools & Ollama (not bundled — install separately)
+
+GhostOps drives these system tools; install what you need and check with
+`ghostops setup`:
+
+```bash
+# Kali / Debian:
 sudo apt install nmap gobuster ffuf sqlmap hydra nikto exploitdb john
+# Fedora (gobuster / searchsploit may need a manual install):
+sudo dnf install nmap sqlmap hydra nikto john
+
+# Ollama (local LLM — optional; GhostOps runs offline without it):
+#   https://ollama.com   then:
+ollama pull dolphin-mistral      # router model (7B, ~4GB)
+ollama pull nomic-embed-text     # embeddings for RAG (optional)
 ```
 
-### 3. Ollama + uncensored model (optional for dev, required for AI mode)
-
-```bash
-# install Ollama (https://ollama.com), then:
-ollama pull dolphin-mistral      # 7B, ~4GB — the default
-ollama pull nomic-embed-text     # for future RAG memory
-# No GPU? Try:  ollama pull phi3:mini
-```
-
-Run `ghostops setup` any time to check what's installed.
+Run `ghostops setup` any time to check tools/model, or `ghostops model` to see
+which LLM is active. **Development** still uses a local venv:
+`python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev,rag]'`.
 
 ---
 

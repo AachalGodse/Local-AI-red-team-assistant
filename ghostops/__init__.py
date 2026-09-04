@@ -1,3 +1,3 @@
-"""GhostOps — Local AI Red Team Assistant (MVP)."""
+"""GhostOps — Local AI Red Team Assistant."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

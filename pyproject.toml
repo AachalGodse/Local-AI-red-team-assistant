@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ghostops"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local AI Red Team Assistant — uncensored, agentic, OPSEC-safe (authorized use only)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,6 +25,11 @@ rag = ["chromadb>=0.5"]
 
 [project.scripts]
 ghostops = "ghostops.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/AachalGodse/Local-AI-red-team-assistant"
+Repository = "https://github.com/AachalGodse/Local-AI-red-team-assistant"
+Issues = "https://github.com/AachalGodse/Local-AI-red-team-assistant/issues"
 
 [tool.setuptools.packages.find]
 include = ["ghostops*"]
