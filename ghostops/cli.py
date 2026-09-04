@@ -13,9 +13,31 @@ app = typer.Typer(
     name="ghostops",
     help="GhostOps - Local AI Red Team Assistant (authorized use only).",
     add_completion=True,
-    no_args_is_help=True,
+    no_args_is_help=False,   # the callback shows the welcome screen for no args
 )
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def _root(
+    ctx: typer.Context,
+    no_intro: bool = typer.Option(
+        False, "--no-intro", help="Skip the first-run walkthrough."),
+):
+    """GhostOps - Local AI Red Team Assistant (authorized use only)."""
+    from ghostops import onboarding
+    # First-run walkthrough: interactive terminals only, once. Never fires in
+    # piped / non-TTY use, so it can't block scripts or automation.
+    if onboarding.should_show_walkthrough(no_intro):
+        onboarding.first_run_walkthrough(console, ctx.invoked_subcommand)
+        onboarding.mark_onboarded()
+        if ctx.invoked_subcommand is None:
+            raise typer.Exit()
+        return
+    # Bare `ghostops` (no subcommand) -> the friendly welcome screen.
+    if ctx.invoked_subcommand is None:
+        onboarding.welcome(console)
+        raise typer.Exit()
 
 
 @app.command()
@@ -293,6 +315,13 @@ def setup():
     """First-run setup - check tools, models, and config."""
     from ghostops.setup_wizard import run_setup
     run_setup()
+
+
+@app.command("help")
+def help_cmd():
+    """Show the GhostOps welcome screen and command reference."""
+    from ghostops import onboarding
+    onboarding.welcome(console)
 
 
 @app.command()

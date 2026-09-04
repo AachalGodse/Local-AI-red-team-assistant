@@ -106,6 +106,7 @@ Run `ghostops setup` any time to check what's installed.
 ## Usage
 
 ```bash
+ghostops help                        # welcome screen + command reference
 ghostops setup                       # verify tools / model / config
 ghostops engage 10.10.10.100         # start an engagement (scope = that target)
 ghostops engage 10.10.10.0/24        # a CIDR range
