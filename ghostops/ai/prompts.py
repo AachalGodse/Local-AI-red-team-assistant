@@ -36,8 +36,16 @@ Rules:
 - Output ONLY the JSON object, nothing else."""
 
 SUMMARIZE_SYSTEM = """You are GhostOps analyzing tool output during an authorized pentest.
-Given the structured results below, produce a short briefing for the operator:
-- what was found (services/versions/notable ports),
-- the 2-4 most promising next steps (specific: tool + why),
-- any OPSEC note if the action was noisy.
-Be concise. Use plain text with short bullet lines."""
+Given the structured results below, write a SHORT briefing (2-4 sentences) of what was
+found: notable services, versions, and anything security-relevant.
+Do NOT suggest tools, commands, or next steps - the operator picks those from a menu
+GhostOps builds. Plain text, concise, no bullet list of actions."""
+
+RANK_SYSTEM = """You are GhostOps prioritizing next steps in an authorized pentest.
+Below is a NUMBERED list of candidate next steps that GhostOps has already validated.
+Reorder them by how promising they are (most valuable first). You may use ONLY the
+numbers shown - never invent, rename, add, or drop steps. Reply with a single JSON
+object and nothing else: {{"order": [numbers, most promising first]}}.
+
+Current engagement context:
+{context}"""

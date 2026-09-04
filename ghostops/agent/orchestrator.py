@@ -20,7 +20,8 @@ from rich.prompt import Confirm
 from rich.table import Table
 
 from ghostops.ai.llm_client import LLMClient
-from ghostops.ai.prompts import PERSONA, ROUTER_SYSTEM, SUMMARIZE_SYSTEM
+from ghostops.ai.prompts import PERSONA, RANK_SYSTEM, ROUTER_SYSTEM, SUMMARIZE_SYSTEM
+from ghostops.agent.next_steps import Action, QUIT, build_actions, resolve_choice
 from ghostops.agent.scope_guard import ScopeGuard
 from ghostops.config import Config, load_config
 from ghostops.models import ActivityLog, Engagement, Phase, Severity
@@ -73,6 +74,10 @@ class Orchestrator:
             engagement.id, chroma_path,
             embed_fn=lambda t: self.llm.embed(t, model=self._embed_model),
         )
+
+        # Current numbered next-steps menu (registry-built). Selecting a number
+        # in the REPL runs the mapped action; empty until the first scan.
+        self._menu: list[Action] = []
 
     # ---------------------------------------------------------------- log
     def _log(self, kind: str, summary: str, detail: str = "") -> None:
@@ -133,6 +138,20 @@ class Orchestrator:
     # ------------------------------------------------------------- router
     def handle(self, text: str) -> None:
         low = text.lower()
+
+        # ---- next-steps menu selection ----
+        # When a menu is showing, a bare number or 'q' is a menu pick. Anything
+        # else (a real command) falls through to normal handling below.
+        if self._menu and (low == "q" or low.isdigit()):
+            choice = resolve_choice(self._menu, text)
+            if choice == QUIT:
+                self._menu = []
+                return console.print("[dim]menu dismissed.[/dim]")
+            if isinstance(choice, Action):
+                return self._run_action(choice)
+            console.print(f"[yellow]Invalid choice.[/yellow] "
+                          f"Pick 1-{len(self._menu)} or 'q'.")
+            return self._render_menu()
 
         # ---- built-in commands (work with or without the LLM) ----
         if low in ("help", "?", "/help"):
@@ -341,9 +360,8 @@ class Orchestrator:
 
         self._render_result(result)
         if self._llm_ok:
-            self._brief(result)
-        else:
-            self._suggest_next()
+            self._brief(result)      # short findings summary (no tool names)
+        self._suggest_next()         # build + (rank) + render the numbered menu
 
     # ---------------------------------------------------------- rendering
     def _render_result(self, result: ToolResult) -> None:
@@ -422,34 +440,80 @@ class Orchestrator:
         if not (self.e.hosts or self.e.findings):
             console.print("[dim]Nothing discovered yet. Try: scan <target>[/dim]")
 
+    # ----------------------------------------------------------- next menu
     def _suggest_next(self) -> None:
-        # Deterministic suggestions, driven by the curated service checklists:
-        # for each discovered service, surface its top methodology step.
-        from ghostops.methodology import checklists as cl
-        tips: list[str] = []
-        if cl.available():
-            for h in self.e.hosts:
-                for s in h.services:
-                    match = cl.match(s.name, s.port)
-                    if match is None or not match.checks:
-                        continue
-                    step = next((c for c in match.checks if c.cmd),
-                                match.checks[0])
-                    line = f"{h.ip}:{s.port} {match.name} - {step.task}"
-                    if step.cmd:
-                        line += "\n    " + cl.render_cmd(step.cmd, h.ip, s.port)
-                    tips.append(line)
-        if not tips:
-            tips = (["Run an nmap scan to discover services: scan <target>"]
-                    if not self.e.hosts else
-                    ["No checklist matched the open services. "
-                     "Browse methodology with 'checklist'."])
+        """Rebuild the registry-driven next-steps menu and show it."""
+        self._refresh_menu()
+        if not self._menu:
+            if not self.e.hosts:
+                console.print("[dim]Nothing discovered yet. Try: scan <target>[/dim]")
+            else:
+                console.print("[dim]No runnable next steps for the open "
+                              "services. Try 'checklist' for methodology.[/dim]")
+            return
+        self._render_menu()
+
+    def _refresh_menu(self) -> None:
+        # The menu is ALWAYS built from the real tool registry + memory. The
+        # model may only reorder it (offline -> deterministic order).
+        self._menu = build_actions(self.e, self.tools)
+        if self._menu and self._llm_ok:
+            self._menu = self._rank_menu(self._menu)
+
+    def _rank_menu(self, menu: list[Action]) -> list[Action]:
+        """Let the model reorder the candidates by relevance. It can only
+        reorder the given numbers; invalid/missing ones are handled here, so it
+        can never invent or drop a step."""
+        listing = "\n".join(f"{i}. {a.label}" for i, a in enumerate(menu, 1))
+        try:
+            decision = self.llm.chat_json([
+                {"role": "system",
+                 "content": RANK_SYSTEM.format(context=self._context_blob())},
+                {"role": "user", "content": listing},
+            ])
+        except Exception:
+            return menu
+        order = decision.get("order") or []
+        seen: set[int] = set()
+        ranked: list[Action] = []
+        for n in order:
+            if isinstance(n, int) and 1 <= n <= len(menu) and n not in seen:
+                seen.add(n)
+                ranked.append(menu[n - 1])
+        for i, a in enumerate(menu, 1):        # append anything the model omitted
+            if i not in seen:
+                ranked.append(a)
+        return ranked
+
+    def _render_menu(self) -> None:
+        if not self._menu:
+            return
+        lines = []
+        for i, a in enumerate(self._menu, 1):
+            tag = " [red](intrusive)[/red]" if a.intrusive else ""
+            lines.append(f"  [cyan]\\[{i}][/cyan] {a.label}{tag}")
         console.print(Panel(
-            "\n".join(f"- {t}" for t in dict.fromkeys(tips)),
-            border_style="magenta", title="Suggested Next Steps",
+            "\n".join(lines), title="Next steps", border_style="magenta",
+            subtitle="[dim]pick a number, or 'q' to skip[/dim]",
         ))
-        if self.e.hosts and cl.available():
-            console.print("[dim]Full per-service steps: 'checklist'[/dim]")
+
+    def _run_action(self, action: Action) -> None:
+        """Menu pick -> prompt for any required input -> confirm gate -> run.
+        Selection sits in FRONT of _execute_tool; it never bypasses scope guard,
+        the confirm gate, or arg validation."""
+        args = dict(action.args)
+        for arg, question in action.prompts:
+            try:
+                val = console.input(
+                    f"[cyan]{question}[/cyan] [dim](blank or 'q' to cancel)[/dim]: "
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                val = ""
+            if val == "" or val.lower() == "q":
+                console.print("[dim]cancelled - back to menu.[/dim]")
+                return self._render_menu()
+            args[arg] = val
+        self._execute_tool(action.tool, args)
 
     # ---------------------------------------------------------- checklists
     def _handle_checklist(self, text: str) -> None:
@@ -670,7 +734,7 @@ class Orchestrator:
             "  attack / mitre        ATT&CK techniques exercised so far\n"
             "  recall <question>     semantic search of past findings (RAG)\n"
             "  what do we know       full engagement summary\n"
-            "  next                  suggested next steps\n"
+            "  next                  numbered menu of next steps (pick by number)\n"
             "  scope / scope add X   view or extend scope\n"
             "  tools                 list tools + availability\n"
             "  phase                 show current kill-chain phase\n"
