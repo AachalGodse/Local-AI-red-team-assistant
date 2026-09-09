@@ -251,10 +251,19 @@ def recall(
                       f"Pull it: [cyan]ollama pull {embed}[/cyan]")
         raise typer.Exit(1)
 
-    vec = VectorMemory(e.id, Path(f"{eng_dir}/{engagement_id}.chroma"),
-                       embed_fn=lambda t: llm.embed(t, model=embed))
-    if vec.count() < len(e.findings):
-        vec.add_findings(e.findings)
+    from ghostops.agent import rag
+    vec = VectorMemory(
+        e.id, Path(f"{eng_dir}/{engagement_id}.chroma"),
+        embed_fn=lambda t: llm.embed(t, model=embed),
+        embed_many_fn=lambda ts: llm.embed_many(ts, model=embed),
+    )
+    with console.status("[dim]indexing semantic memory...[/dim]"):
+        rag.ensure_indexed(
+            vec, e.findings,
+            on_start=lambda n: console.print(
+                f"[dim]indexing {n} finding(s) into semantic memory "
+                f"(one-time)...[/dim]"),
+        )
     hits = vec.query(question, k=5)
     if not hits:
         console.print("[dim]No relevant findings recorded.[/dim]")
@@ -271,6 +280,119 @@ def recall(
         t.add_row(str(i), meta.get("title") or (h.get("document") or "")[:70],
                   where)
     console.print(t)
+
+
+@app.command()
+def ask(
+    question: str = typer.Argument(..., help="natural-language question"),
+    engagement_id: str = typer.Argument("last", help="Engagement ID or 'last'"),
+):
+    """Answer a question using ONLY this engagement's stored findings (RAG)."""
+    from pathlib import Path
+    from rich.markup import escape
+    from rich.table import Table
+    from ghostops.agent import rag
+    from ghostops.ai.llm_client import LLMClient
+    from ghostops.config import load_config
+    from ghostops.memory.store import EngagementStore, list_engagements
+    from ghostops.memory.vector_store import VectorMemory, chromadb_available
+
+    if not (question or "").strip():
+        console.print("[yellow]Ask a question, e.g.[/yellow] "
+                      "[cyan]ghostops ask \"what did we find on the web servers?\"[/cyan]")
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    eng_dir = cfg.get("engagements.dir", "./engagements")
+    if not chromadb_available():
+        console.print("[yellow]Grounded answers need ChromaDB.[/yellow] "
+                      "Install: [cyan]pip install chromadb[/cyan]")
+        raise typer.Exit(1)
+    if engagement_id == "last":
+        items = list_engagements(eng_dir)
+        if not items:
+            console.print("[yellow]No engagements found.[/yellow]")
+            raise typer.Exit(1)
+        engagement_id = sorted(items, key=lambda x: x["created_at"])[-1]["id"]
+    store = EngagementStore(f"{eng_dir}/{engagement_id}.db")
+    e = store.load()
+    if e is None:
+        console.print(f"[red]Engagement not found:[/red] {engagement_id}")
+        raise typer.Exit(1)
+
+    host = cfg.get("llm.host", "http://localhost:11434")
+    embed = cfg.get("llm.embed_model", "nomic-embed-text")
+    router = cfg.get("llm.model", "dolphin-mistral")
+    embedder = LLMClient(model=embed, host=host)
+    if not (embedder.available() and embedder.has_model(embed)):
+        console.print(f"[yellow]Embed model unavailable.[/yellow] "
+                      f"Pull it: [cyan]ollama pull {embed}[/cyan]")
+        raise typer.Exit(1)
+
+    vec = VectorMemory(
+        e.id, Path(f"{eng_dir}/{engagement_id}.chroma"),
+        embed_fn=lambda t: embedder.embed(t, model=embed),
+        embed_many_fn=lambda ts: embedder.embed_many(ts, model=embed),
+    )
+    with console.status("[dim]indexing semantic memory...[/dim]"):
+        rag.ensure_indexed(
+            vec, e.findings,
+            on_start=lambda n: console.print(
+                f"[dim]indexing {n} finding(s) into semantic memory "
+                f"(one-time)...[/dim]"),
+        )
+
+    chat = LLMClient(model=router, host=host,
+                     temperature=cfg.get("llm.temperature", 0.4),
+                     timeout=int(cfg.get("llm.timeout", 300) or 300))
+    res = rag.answer(
+        vec, chat, question,
+        k=int(cfg.get("rag.top_k", rag.DEFAULT_K)),
+        max_distance=float(cfg.get("rag.max_distance",
+                                   rag.DEFAULT_MAX_DISTANCE)),
+        llm_ready=chat.available() and chat.has_model(router),
+    )
+
+    if res.mode in (rag.MODE_UNAVAILABLE, rag.MODE_RETRIEVAL_FAILED):
+        console.print(f"[yellow]{escape(res.message)}[/yellow]")
+        raise typer.Exit(1)
+    if res.mode == rag.MODE_NO_FINDINGS:
+        console.print(Panel(escape(res.text), border_style="yellow",
+                            title="No grounded answer"))
+        return
+    if res.mode == rag.MODE_BLOCKED:
+        console.print(Panel(escape(res.message), border_style="red",
+                            title="Answer withheld"))
+    elif res.mode == rag.MODE_SEARCH:
+        console.print(f"[yellow]{escape(res.message)}[/yellow]")
+    else:
+        console.print(Panel(
+            escape(res.text or "(empty response)"),
+            border_style="yellow" if res.refused else "blue",
+            title="Not covered by findings" if res.refused
+            else "Grounded answer"))
+
+    if res.used:
+        if res.dropped:
+            console.print(f"[dim]{res.dropped} further finding(s) omitted to "
+                          f"keep the model's context within limits.[/dim]")
+        t = Table(title=f"Sources - {escape(question)}")
+        t.add_column("#", style="cyan", justify="right")
+        t.add_column("Finding", style="green")
+        t.add_column("Where", style="dim")
+        t.add_column("Dist", style="dim", justify="right")
+        for i, h in enumerate(res.used, 1):
+            meta = h.get("metadata", {})
+            where = meta.get("host", "") or ""
+            if meta.get("port"):
+                where += f":{meta['port']}"
+            dist = h.get("distance")
+            t.add_row(str(i),
+                      escape(meta.get("title")
+                             or (h.get("document") or "")[:70]),
+                      escape(where),
+                      "-" if dist is None else f"{dist:.2f}")
+        console.print(t)
 
 
 @app.command()

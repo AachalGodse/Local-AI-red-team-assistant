@@ -22,7 +22,7 @@ so payloads come from a reviewed catalog, never the model.
 
 ## Features
 
-Everything below is implemented and covered by the test suite (42 tests):
+Everything below is implemented and covered by the test suite (135 tests):
 
 - ✅ **CLI** (`ghostops engage/shell/resume/report/engagements/setup/version`)
 - ✅ **Agent loop** with a strict JSON tool-call contract for the LLM router
@@ -44,6 +44,9 @@ Everything below is implemented and covered by the test suite (42 tests):
 - ✅ **Semantic memory (RAG)** — optional ChromaDB + `nomic-embed-text`
   embeddings; `recall <question>` finds past findings by meaning. Augments the
   SQLite memory, never replaces it; fully optional (degrades cleanly if absent)
+- ✅ **Grounded answers** — `ask <question>` retrieves the relevant findings and
+  has the model answer **only** from them, with a Sources table for every claim.
+  If nothing relevant is retrieved the model is never called at all
 
 The roadmap in `GhostOps_Plan.md` is now fully implemented.
 
@@ -141,6 +144,7 @@ ghostops checklist smb                         # enumeration steps for SMB
 ghostops attack                                # action -> MITRE ATT&CK map
 ghostops model                                 # which LLM is active (AI/offline)
 ghostops recall "what web servers did we find" # semantic search (RAG)
+ghostops ask "what's exploitable here?"        # grounded answer + sources
 ```
 
 Inside an engagement (REPL):
@@ -159,6 +163,7 @@ tty / privesc <name>   post-exploitation helpers
 checklist [service]    per-service enumeration methodology
 attack / mitre         ATT&CK techniques exercised so far
 recall <question>      semantic search of past findings (RAG)
+ask <question>         grounded answer built only from those findings
 what do we know        full engagement summary
 next                   suggested next steps from discovered services
 scope / scope add X    view or extend the authorized scope
@@ -203,6 +208,43 @@ Without either, GhostOps runs exactly as before and `recall` tells you what's
 missing. RAG **augments** the SQLite memory (still the source of truth) — it
 never replaces it, and the model only *reasons over* retrieved findings, never
 invents them.
+
+### Grounded answers (`ask`)
+
+`recall` shows you what matched; `ask` answers with it:
+
+```bash
+ask what did we find on the web servers          # inside the REPL
+ghostops ask "what's exploitable here?" last     # from the shell
+```
+
+Every answer is followed by a **Sources** table listing the exact findings the
+model was given, with their distances, so each claim is checkable. If nothing
+relevant is retrieved, GhostOps says so **without calling the model at all** —
+it cannot invent an answer to a question it was never asked. With no router
+model available, `ask` degrades to the `recall` search table rather than
+dead-ending.
+
+#### Finding text is untrusted input
+
+Finding titles and descriptions are built from scanner output, and scanners
+echo bytes chosen by the **scanned host** — so a hostile target can write text
+that reaches the model. GhostOps defends that in four independent layers:
+retrieval filtering, sanitising each finding (flattened, control characters
+stripped, citation-shaped text defused, length-capped under a pinned
+`num_ctx`), a prompt that fences the findings as untrusted DATA and restates
+its rules *after* them, and an output guard that withholds any answer
+containing a command shape or a citation to a finding that does not exist.
+Rule 5 beats rule 1: a command sitting inside a finding is **not** licence to
+reproduce it.
+
+> **Known limitation.** Those layers strip the dangerous *content* — the
+> command, the credential, the fabricated citation — but a hostile finding can
+> still influence how a **refusal is worded**. GhostOps may tell you that a
+> finding contains a planted command without reproducing it. That is
+> deliberate: knowing a scanned host planted something is useful. Read a
+> refusal's phrasing as a report *about untrusted finding text*, never as a
+> fact about the engagement, and use the Sources table to inspect it directly.
 
 ---
 

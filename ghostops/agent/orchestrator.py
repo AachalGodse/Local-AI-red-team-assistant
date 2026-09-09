@@ -15,12 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
 from ghostops.ai.llm_client import LLMClient
 from ghostops.ai.prompts import PERSONA, RANK_SYSTEM, ROUTER_SYSTEM, SUMMARIZE_SYSTEM
+from ghostops.agent import rag
 from ghostops.agent.next_steps import Action, QUIT, build_actions, resolve_choice
 from ghostops.agent.scope_guard import ScopeGuard
 from ghostops.agent.targets import normalize
@@ -39,6 +41,20 @@ _PAYLOAD_CATEGORIES = frozenset(
 )
 
 
+def _cfg_num(cfg, key: str, default, cast):
+    """Read a numeric config value, tolerating a missing, null or malformed
+    one. `ask` tuning must never prevent an engagement from opening."""
+    raw = cfg.get(key, default)
+    if raw is None:
+        return default
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        console.print(f"[yellow]config: {key}={raw!r} is not a number; "
+                      f"using {default}.[/yellow]")
+        return default
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -53,10 +69,12 @@ class Orchestrator:
         self.e = engagement
         self.store = store
         self.tools = build_registry(cfg)
+        self._llm_timeout = _cfg_num(cfg, "llm.timeout", 300, int)
         self.llm = LLMClient(
             model=engagement.model,
             host=cfg.get("llm.host", "http://localhost:11434"),
             temperature=cfg.get("llm.temperature", 0.4),
+            timeout=self._llm_timeout,
         )
         self.guard = ScopeGuard(
             engagement.scope, enforce=cfg.get("safety.enforce_scope", True)
@@ -74,7 +92,14 @@ class Orchestrator:
         self.vec = VectorMemory(
             engagement.id, chroma_path,
             embed_fn=lambda t: self.llm.embed(t, model=self._embed_model),
+            embed_many_fn=lambda ts: self.llm.embed_many(
+                ts, model=self._embed_model),
         )
+        # Never let a typo in config.yaml stop an engagement from opening:
+        # these tune `ask` only, so fall back to the defaults and say so.
+        self._rag_k = _cfg_num(cfg, "rag.top_k", rag.DEFAULT_K, int)
+        self._rag_max_distance = _cfg_num(
+            cfg, "rag.max_distance", rag.DEFAULT_MAX_DISTANCE, float)
 
         # Current numbered next-steps menu (registry-built). Selecting a number
         # in the REPL runs the mapped action; empty until the first scan.
@@ -172,6 +197,9 @@ class Orchestrator:
             return self._handle_checklist(text)
         if low in ("attack", "mitre", "att&ck", "/attack", "/mitre"):
             return self._show_attack()
+        if (low.startswith("ask ") or low.startswith("/ask ")
+                or low in ("ask", "/ask")):
+            return self._ask(text)
         if low.startswith("recall ") or low in ("recall", "/recall"):
             return self._recall(text)
         if low.startswith("scan "):
@@ -598,9 +626,7 @@ class Orchestrator:
                 f"[cyan]ollama pull {self._embed_model}[/cyan] (Ollama must run)."
             )
             return
-        # ensure everything discovered is indexed (covers resume / late enable)
-        if self.vec.count() < len(self.e.findings):
-            self.vec.add_findings(self.e.findings)
+        self._ensure_indexed()
 
         hits = self.vec.query(question, k=5)
         if not hits:
@@ -624,21 +650,120 @@ class Orchestrator:
         if self._llm_ok:
             self._recall_summary(question, hits)
 
+    def _ensure_indexed(self) -> None:
+        """Bring semantic memory level with SQLite, which is the source of
+        truth. Covers a resumed engagement, findings recorded while ChromaDB
+        was absent, and a collection-name change (a new name starts empty, so
+        everything re-indexes exactly once). Silent unless work is needed."""
+        def notice(total: int) -> None:
+            console.print(f"[dim]indexing {total} finding(s) into semantic "
+                          f"memory (one-time)...[/dim]")
+
+        with console.status("[dim]indexing semantic memory...[/dim]"):
+            rag.ensure_indexed(self.vec, self.e.findings, on_start=notice)
+
+    # ----------------------------------------------------------------- ask
+    def _ask(self, text: str) -> None:
+        """Grounded Q&A: retrieve findings, then answer STRICTLY from them.
+
+        `recall` shows what matched; `ask` answers with it. The model only ever
+        sees findings already stored by a real tool run - it cannot introduce a
+        host, port, version or vulnerability of its own.
+        """
+        question = text.split(" ", 1)[1].strip() if " " in text else ""
+        if not question:
+            console.print("usage: ask <question>   "
+                          "e.g. ask what did we find on the web servers")
+            return
+
+        if self.vec.available():
+            if not (self.llm.available()
+                    and self.llm.has_model(self._embed_model)):
+                console.print(
+                    f"[yellow]Embed model unavailable.[/yellow] Pull it: "
+                    f"[cyan]ollama pull {self._embed_model}[/cyan] "
+                    f"(Ollama must run)."
+                )
+                return
+            self._ensure_indexed()
+
+        res = rag.answer(
+            self.vec, self.llm, question,
+            k=self._rag_k,
+            max_distance=self._rag_max_distance,
+            llm_ready=self._llm_ok,
+        )
+        self._render_grounded(question, res)
+        self._log("ask", f"ask: {question}", f"mode={res.mode} "
+                                             f"sources={len(res.used)}")
+
+    def _render_grounded(self, question: str, res) -> None:
+        """Answer first, then the provenance table. Every claim the model makes
+        is citable back to a row the operator can see."""
+        if res.mode in (rag.MODE_UNAVAILABLE, rag.MODE_RETRIEVAL_FAILED):
+            console.print(f"[yellow]{escape(res.message)}[/yellow]")
+            return
+
+        if res.mode == rag.MODE_NO_FINDINGS:
+            console.print(Panel(escape(res.text), border_style="yellow",
+                                title="No grounded answer"))
+            return
+
+        if res.mode == rag.MODE_SEARCH:
+            console.print(f"[yellow]{escape(res.message)}[/yellow]")
+            self._render_sources(question, res.used)
+            return
+
+        border = "yellow" if res.refused else "blue"
+        title = "Not covered by findings" if res.refused else "Grounded answer"
+        console.print(Panel(escape(res.text or "(empty response)"),
+                            border_style=border, title=title))
+        self._render_sources(question, res.used, res.dropped)
+
+    def _render_sources(self, question: str, hits: list[dict],
+                        dropped: int = 0) -> None:
+        if not hits:
+            return
+        if dropped:
+            console.print(f"[dim]{dropped} further finding(s) omitted to keep "
+                          f"the model's context within limits.[/dim]")
+        t = Table(title=f"Sources - {escape(question)}")
+        t.add_column("#", style="cyan", justify="right")
+        t.add_column("Finding", style="green")
+        t.add_column("Where", style="dim")
+        t.add_column("Dist", style="dim", justify="right")
+        for i, h in enumerate(hits, 1):
+            meta = h.get("metadata", {})
+            where = meta.get("host", "") or ""
+            if meta.get("port"):
+                where += f":{meta['port']}"
+            dist = h.get("distance")
+            t.add_row(str(i),
+                      escape(meta.get("title")
+                             or (h.get("document") or "")[:70]),
+                      escape(where),
+                      "-" if dist is None else f"{dist:.2f}")
+        console.print(t)
+
     def _recall_summary(self, question: str, hits: list[dict]) -> None:
-        ctx = "\n".join(f"- {h.get('document', '')}" for h in hits)
-        try:
-            answer = self.llm.chat([
-                {"role": "system", "content":
-                    "You are GhostOps. Using ONLY the retrieved findings below, "
-                    "answer the operator's question about this engagement. Be "
-                    "concise. Never invent hosts, ports, versions, or exploits."
-                    "\n\nRetrieved findings:\n" + ctx},
-                {"role": "user", "content": question},
-            ])
-            console.print(Panel(answer, border_style="blue",
-                                title="Recall summary"))
-        except Exception as exc:
-            console.print(f"[dim]summary unavailable: {exc}[/dim]")
+        """Grounded summary of the rows recall just retrieved.
+
+        Routed through rag.summarize rather than an inline prompt: the finding
+        text here comes from the scanned host exactly as it does for `ask`, so
+        it gets the same untrusted-data fencing, the same restated rules, and
+        the same output guard.
+        """
+        res = rag.summarize(self.llm, question, hits)
+        if res.mode == rag.MODE_BLOCKED:
+            console.print(f"[red]{escape(res.message)}[/red]")
+            return
+        if res.mode != rag.MODE_ANSWER:
+            if res.message:
+                console.print(f"[dim]{escape(res.message)}[/dim]")
+            return
+        console.print(Panel(escape(res.text),
+                            border_style="yellow" if res.refused else "blue",
+                            title="Recall summary"))
 
     # -------------------------------------------------------------- scope
     def _handle_scope(self, text: str) -> None:
@@ -743,6 +868,7 @@ class Orchestrator:
             "  checklist [service]   per-service enumeration methodology\n"
             "  attack / mitre        ATT&CK techniques exercised so far\n"
             "  recall <question>     semantic search of past findings (RAG)\n"
+            "  ask <question>        grounded answer from those findings\n"
             "  what do we know       full engagement summary\n"
             "  next                  numbered menu of next steps (pick by number)\n"
             "  scope / scope add X   view or extend scope\n"

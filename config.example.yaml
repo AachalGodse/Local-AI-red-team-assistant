@@ -12,9 +12,23 @@ llm:
   embed_model: nomic-embed-text
   host: http://localhost:11434
   temperature: 0.4
+  # Seconds to wait for one generation. A grounded `ask` answer on a CPU-only
+  # box has been measured at ~7 minutes with a 7B model; raise this if answers
+  # fall back to plain search, or use a smaller model.
+  timeout: 300
   # If Ollama or the model is unreachable, GhostOps runs in offline mode
   # (manual commands still work; only the AI reasoning is disabled).
   # Check what's active any time with:  ghostops model
+
+rag:
+  # Semantic memory (needs the [rag] extra + the embed model above).
+  # How many findings to retrieve per question.
+  top_k: 5
+  # Cosine-distance cutoff for `ask`. Hits further away are dropped, and if
+  # nothing survives GhostOps answers "NO RELEVANT FINDINGS" WITHOUT asking
+  # the model - so it cannot invent one. Lower = stricter. Measured range for
+  # nomic-embed-text: on-topic ~0.43-0.53, off-domain ~0.64+.
+  max_distance: 0.62
 
 engagements:
   # Where engagement databases are stored.
