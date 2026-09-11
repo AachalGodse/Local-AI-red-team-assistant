@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from ghostops.models import Engagement
+from ghostops.tools.searchsploit_tool import normalize_query
 
 QUIT = "quit"
 
@@ -91,11 +92,16 @@ def build_actions(engagement: Engagement, registry: dict) -> list[Action]:
                     prompts=[("username", "username to try"),
                              ("passlist", "path to a password list")]))
 
-            # any versioned service -> searchsploit (find known exploits)
+            # any versioned service -> searchsploit (find known exploits).
+            # Normalize here too, so the label shows the query that will really
+            # run - a full nmap banner matches nothing in ExploitDB.
             if banner:
-                add(Action(
-                    label=f"Search exploits for '{banner}' on {host}:{port} (searchsploit)",
-                    tool="searchsploit", args={"query": banner}))
+                query = normalize_query(banner)
+                if query:
+                    add(Action(
+                        label=f"Search exploits for '{query}' on {host}:{port} "
+                              f"(searchsploit)",
+                        tool="searchsploit", args={"query": query}))
 
     # user-provided web targets (from `scan <url>` / `engage <url>`), persisted
     # so the web tools stay offered even when nmap found no services on the host.

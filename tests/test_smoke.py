@@ -118,8 +118,15 @@ def test_searchsploit_query_validation_and_parse():
     t = SearchsploitTool()
     ok, _ = t.validate_args({"query": "OpenSSH 8.2"})
     assert ok
-    bad, _ = t.validate_args({"query": "OpenSSH; rm -rf /"})
-    assert not bad
+    # A shell-metacharacter query is now SANITIZED rather than refused - real
+    # nmap banners are full of ';' and '(' and the menu must be able to run
+    # the step it offers. What matters is that nothing dangerous reaches argv:
+    # everything after the ';' is dropped, so no shell payload survives.
+    ok2, _ = t.validate_args({"query": "OpenSSH; rm -rf /"})
+    assert ok2
+    argv = t.build_command({"query": "OpenSSH; rm -rf /"})
+    assert argv == ["searchsploit", "--json", "OpenSSH"]
+    assert not [a for a in argv[2:] if a.startswith("-")]
     payload = json.dumps({
         "SEARCH": "OpenSSH 8.2",
         "RESULTS_EXPLOIT": [

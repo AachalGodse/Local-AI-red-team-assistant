@@ -13,7 +13,52 @@ import re
 from ghostops.models import Finding, Severity
 from ghostops.tools.base_tool import BaseTool, ToolResult
 
-_QUERY_RE = re.compile(r"^[A-Za-z0-9 ._\-/+]+$")
+# Characters searchsploit has any use for. Everything else becomes a space -
+# we normalize rather than reject, because the queries that matter come from
+# nmap version banners full of ';', '(' and ','.
+_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9 ._\-/+]")
+
+# nmap appends its extras after the first of these.
+_BANNER_BREAK = re.compile(r"[;(\[,]")
+
+# '2.4.7', '6.6.1p1', '1.14.0', '10.0' - starts with a digit.
+_VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z._\-]*$")
+
+_MAX_TOKENS = 6
+_MAX_QUERY = 200
+
+
+def normalize_query(raw: str) -> str:
+    """Reduce whatever we were handed to a short, argv-safe product+version.
+
+    'OpenSSH 6.6.1p1 Ubuntu 2ubuntu2.13 Ubuntu Linux; protocol 2.0'
+        -> 'OpenSSH 6.6.1p1'
+    'Apache httpd 2.4.7 ((Ubuntu))'
+        -> 'Apache httpd 2.4.7'
+
+    A whole banner matches nothing in ExploitDB; product + version matches
+    plenty. Every token is stripped of leading '-' so a query can never turn
+    into a searchsploit FLAG - searchsploit folds a '-'-prefixed positional
+    into its own option parsing, where -u triggers a package update and -m
+    mirrors a file. That protection is the reason this sanitizes instead of
+    simply allowing more characters through.
+    """
+    text = _BANNER_BREAK.split(str(raw or ""), 1)[0]
+    text = _UNSAFE_CHARS.sub(" ", text)
+
+    out: list[str] = []
+    for token in text.split():
+        token = token.lstrip("-")
+        if not token:
+            continue
+        out.append(token)
+        # Stop once we have a product AND a version; keep going for a
+        # version-less banner like 'Postfix smtpd'.
+        if len(out) > 1 and _VERSION_RE.match(token):
+            break
+        if len(out) >= _MAX_TOKENS:
+            break
+    return " ".join(out)[:_MAX_QUERY].strip()
 
 
 class SearchsploitTool(BaseTool):
@@ -37,16 +82,19 @@ class SearchsploitTool(BaseTool):
         ok, msg = super().validate_args(args)
         if not ok:
             return ok, msg
-        q = str(args.get("query", "")).strip()
-        if not q or len(q) > 200:
-            return False, "query must be 1-200 characters"
-        if not _QUERY_RE.match(q):
-            return False, f"query has unsupported characters: {q!r}"
+        raw = str(args.get("query", ""))
+        if len(raw) > 4000:
+            return False, "query is implausibly long"
+        # Reject only what cannot be searched at all. A version banner is
+        # normalized, never refused - a step the menu offers must be runnable.
+        if not normalize_query(raw):
+            return False, f"nothing searchable in query: {raw!r}"
         return True, ""
 
     def build_command(self, args: dict) -> list[str]:
-        q = str(args["query"]).strip()
-        return [self.binary, "--json", *q.split()]
+        q = normalize_query(args.get("query", ""))
+        tokens = [t for t in q.split() if not t.startswith("-")]
+        return [self.binary, "--json", *tokens]
 
     def parse(self, result: ToolResult) -> None:
         try:

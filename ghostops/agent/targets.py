@@ -39,6 +39,39 @@ class Target:
             return None
 
 
+# An engagement authorizes at most this many resolved addresses for one
+# hostname. DNS decides what goes into scope, so the answer is bounded and the
+# caller prints every address it adds - a poisoned resolver must not be able to
+# quietly widen an engagement.
+MAX_RESOLVED = 8
+
+
+def resolve_all(host: str, limit: int = MAX_RESOLVED) -> list[str]:
+    """Every address `host` resolves to (A and AAAA), best-effort.
+
+    Returns [] on any failure - no exception escapes, because failing to
+    resolve must degrade to a hostname-only scope rather than break `engage`.
+    """
+    host = (host or "").strip()
+    if not host or _is_ip(host):
+        return []
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return []
+    out: list[str] = []
+    for info in infos:
+        try:
+            ip = info[4][0]
+        except (IndexError, TypeError):
+            continue
+        if ip and ip not in out:
+            out.append(ip)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _is_ip(s: str) -> bool:
     try:
         ipaddress.ip_address(s)

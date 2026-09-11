@@ -25,7 +25,7 @@ from ghostops.ai.prompts import PERSONA, RANK_SYSTEM, ROUTER_SYSTEM, SUMMARIZE_S
 from ghostops.agent import rag
 from ghostops.agent.next_steps import Action, QUIT, build_actions, resolve_choice
 from ghostops.agent.scope_guard import ScopeGuard
-from ghostops.agent.targets import normalize
+from ghostops.agent.targets import normalize, resolve_all
 from ghostops.config import Config, load_config
 from ghostops.models import ActivityLog, Engagement, Phase, Severity
 from ghostops.memory.store import EngagementStore
@@ -787,13 +787,26 @@ class Orchestrator:
         parts = text.split()
         if len(parts) >= 3 and parts[1].lower() == "add":
             entry = parts[2]
+            added = []
             if entry not in self.e.scope:
                 self.e.scope.append(entry)
+                added.append(entry)
+            # A hostname added mid-engagement has the same problem `engage`
+            # does: tools report findings against the resolved IP.
+            t = normalize(entry)
+            if t.kind == "host":
+                for ip in resolve_all(t.host):
+                    if ip not in self.e.scope:
+                        self.e.scope.append(ip)
+                        added.append(ip)
+            if added:
                 self.guard = ScopeGuard(
                     self.e.scope,
                     enforce=self.cfg.get("safety.enforce_scope", True),
                 )
-                console.print(f"[green]Added to scope:[/green] {entry}")
+                console.print("[green]Added to scope:[/green] "
+                              + ", ".join(escape(a) for a in added))
+                self._log("scope", f"scope add {entry}", ", ".join(added))
             return
         console.print(
             f"Scope: [cyan]{', '.join(self.e.scope) or '(none)'}[/cyan]  "
@@ -926,6 +939,23 @@ class Orchestrator:
 
 
 # ------------------------------------------------------------- entrypoints
+def _engagement_scope(t, raw_target: str) -> tuple[list[str], list[str]]:
+    """The authorized scope for a freshly engaged target.
+
+    Returns (scope, resolved_addresses). A hostname target resolves to an IP,
+    and nmap keys its findings by that IP - so without authorizing it too,
+    every follow-up action against the host we just authorized gets blocked.
+    Split out from start_engagement so the behaviour is testable without
+    opening a REPL.
+    """
+    scope = [t.host or raw_target]
+    resolved = resolve_all(t.host) if t.kind == "host" else []
+    for ip in resolved:
+        if ip not in scope:
+            scope.append(ip)
+    return scope, resolved
+
+
 def _store_for(cfg: Config, engagement_id: str) -> EngagementStore:
     eng_dir = cfg.get("engagements.dir", "./engagements")
     return EngagementStore(f"{eng_dir}/{engagement_id}.db")
@@ -938,11 +968,22 @@ def start_engagement(target: str, model: str | None = None,
     # Normalize so the scope guard works on a bare host/IP even if the operator
     # engaged with a full URL; keep the URL as a web target for the web tools.
     t = normalize(target)
+    scope, resolved = _engagement_scope(t, target)
     e = Engagement(
-        id=eid, name=target, scope=[t.host or target], phase=Phase.RECON,
+        id=eid, name=target, scope=scope, phase=Phase.RECON,
         created_at=_now(), stealth=stealth,
         model=model or cfg.get("llm.model", "dolphin-mistral"),
     )
+    if resolved:
+        console.print(
+            f"[dim]{t.host} resolves to {', '.join(resolved)} - "
+            f"authorizing {'it' if len(resolved) == 1 else 'them'} too.[/dim]"
+        )
+        e.activity.append(ActivityLog(
+            timestamp=_now(), kind="scope",
+            summary=f"authorized {t.host} + {len(resolved)} resolved address(es)",
+            detail=", ".join(resolved),
+        ))
     if t.is_web and t.url:
         e.add_web_target(t.url)
     store = _store_for(cfg, eid)

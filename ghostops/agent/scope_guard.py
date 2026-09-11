@@ -42,10 +42,19 @@ class ScopeGuard:
 
     @staticmethod
     def _as_network(entry: str):
+        """Parse a scope entry (or a target) as a network.
+
+        A slash-less address is a single host, so the prefix length comes from
+        its FAMILY - /32 for IPv4, /128 for IPv6. Hardcoding /32 turned a bare
+        IPv6 address into a 2**96-address prefix, and, since targets are parsed
+        here too, made a legitimate IPv6 /64 scope reject its own hosts.
+        """
         try:
             if "/" in entry:
                 return ipaddress.ip_network(entry, strict=False)
-            return ipaddress.ip_network(entry + "/32", strict=False)
+            addr = ipaddress.ip_address(entry)
+            return ipaddress.ip_network(
+                f"{entry}/{addr.max_prefixlen}", strict=False)
         except ValueError:
             return None
 
