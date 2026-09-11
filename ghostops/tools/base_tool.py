@@ -47,6 +47,11 @@ class BaseTool:
     # JSON-schema-ish description of accepted args; subclasses override.
     args_schema: dict = {"type": "object", "properties": {}, "required": []}
     binary: str = ""          # executable name to look up on PATH
+    # Loud/attacking tools. The orchestrator ALWAYS prompts before running one,
+    # even when safety.confirm_before_run is off - a config flag must not be
+    # able to fire a brute-force silently. Keep in step with the intrusive
+    # actions in agent/next_steps.py (tests/test_smoke.py asserts they agree).
+    intrusive: bool = False
 
     def __init__(self, timeout: int = 600, default_args: str = ""):
         self.timeout = timeout

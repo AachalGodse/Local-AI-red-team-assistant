@@ -343,9 +343,19 @@ class Orchestrator:
             self._log("tool", f"dry-run {name} {target}", result.command_str)
             return
 
-        if self.confirm_before_run:
+        # Intrusive tools are ALWAYS confirmed. `confirm_before_run: false`
+        # is a convenience for quiet recon; it must never be able to launch a
+        # brute-force or a vuln scan without the operator saying yes.
+        if self.confirm_before_run or tool.intrusive:
+            if tool.intrusive and not self.confirm_before_run:
+                console.print(
+                    f"[yellow]{name} is intrusive[/yellow] - confirming anyway, "
+                    f"despite [dim]confirm_before_run: false[/dim]."
+                )
             if not Confirm.ask("Execute this command?", default=True):
                 console.print("[dim]skipped.[/dim]")
+                self._log("tool", f"declined {name}",
+                          "operator declined at the confirm gate")
                 return
 
         with console.status(f"[cyan]running {name}...[/cyan]"):

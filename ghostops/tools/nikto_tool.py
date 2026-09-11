@@ -29,6 +29,7 @@ _SUMMARY_RE = re.compile(r"^\d+\s+requests?:", re.IGNORECASE)
 class NiktoTool(BaseTool):
     name = "nikto"
     binary = "nikto"
+    intrusive = True
     description = (
         "Web server vulnerability scanner. Flags dangerous files, outdated "
         "software, and misconfigurations on an HTTP(S) service. NOISY. "

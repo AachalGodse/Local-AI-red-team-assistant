@@ -25,6 +25,7 @@ _SERVICES = {
 class HydraTool(BaseTool):
     name = "hydra"
     binary = "hydra"
+    intrusive = True
     description = (
         "Online login brute-forcer. Tries username/password combos against a "
         "network service. VERY NOISY. Args: target (host, required), service "

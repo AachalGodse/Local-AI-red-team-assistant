@@ -254,3 +254,138 @@ def test_ranking_failure_keeps_the_deterministic_order():
     menu = _menu()
     ranked = _orc_with(menu, Boom())._rank_menu(menu)
     assert [a.tool for a in ranked] == [a.tool for a in menu]
+
+
+# ------------------------- the gate is unconditional for intrusive tools
+
+def _orch_no_confirm(tmp_path):
+    """An orchestrator with safety.confirm_before_run explicitly OFF."""
+    o = _orch(tmp_path)
+    o.confirm_before_run = False
+    return o
+
+
+def test_intrusive_tool_confirms_even_when_confirm_before_run_is_false(
+        tmp_path, monkeypatch):
+    """The whole point: a config flag must not be able to launch a
+    brute-force silently. Operator says NO -> hydra must not run."""
+    import ghostops.agent.orchestrator as orch
+    o = _orch_no_confirm(tmp_path)
+    assert o.confirm_before_run is False
+    assert o.tools["hydra"].intrusive is True
+
+    monkeypatch.setattr(o.tools["hydra"], "is_available", lambda: True)
+    asked = {"n": 0}
+
+    def _ask(*a, **k):
+        asked["n"] += 1
+        return False                      # operator declines
+
+    monkeypatch.setattr(orch.Confirm, "ask", _ask)
+    ran = {"called": False}
+    monkeypatch.setattr(o.tools["hydra"], "run",
+                        lambda *a, **k: ran.update(called=True))
+
+    o._execute_tool("hydra", {"target": "10.0.0.5", "service": "ssh",
+                              "username": "root", "passlist": "/tmp/pw.txt"})
+
+    assert asked["n"] == 1, "intrusive tool did not reach the confirm gate"
+    assert ran["called"] is False, "declined intrusive tool ran anyway"
+
+
+def test_declining_an_intrusive_tool_is_recorded_in_the_activity_log(
+        tmp_path, monkeypatch):
+    import ghostops.agent.orchestrator as orch
+    o = _orch_no_confirm(tmp_path)
+    monkeypatch.setattr(o.tools["nikto"], "is_available", lambda: True)
+    monkeypatch.setattr(orch.Confirm, "ask", lambda *a, **k: False)
+    monkeypatch.setattr(o.tools["nikto"], "run",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("must not run")))
+
+    before = len(o.e.activity)
+    o._execute_tool("nikto", {"url": "http://10.0.0.5/"})
+    assert len(o.e.activity) == before + 1
+    assert "declined" in o.e.activity[-1].summary.lower()
+
+
+def test_all_three_intrusive_tools_are_gated(tmp_path, monkeypatch):
+    import ghostops.agent.orchestrator as orch
+    calls = {
+        "hydra": {"target": "10.0.0.5", "service": "ssh",
+                  "username": "root", "passlist": "/tmp/pw.txt"},
+        "sqlmap": {"url": "http://10.0.0.5/p.php?id=1"},
+        "nikto": {"url": "http://10.0.0.5/"},
+    }
+    for tool, args in calls.items():
+        o = _orch_no_confirm(tmp_path)
+        monkeypatch.setattr(o.tools[tool], "is_available", lambda: True)
+        monkeypatch.setattr(orch.Confirm, "ask", lambda *a, **k: False)
+        ran = {"called": False}
+        monkeypatch.setattr(o.tools[tool], "run",
+                            lambda *a, **k: ran.update(called=True))
+        o._execute_tool(tool, args)
+        assert ran["called"] is False, tool
+
+
+def test_non_intrusive_tool_still_honours_confirm_before_run_false(
+        tmp_path, monkeypatch):
+    """The override is narrow: turning confirmation off must still work for
+    quiet recon, or the setting would be meaningless."""
+    import ghostops.agent.orchestrator as orch
+    o = _orch_no_confirm(tmp_path)
+    assert o.tools["nmap"].intrusive is False
+
+    monkeypatch.setattr(o.tools["nmap"], "is_available", lambda: True)
+    asked = {"n": 0}
+
+    def _ask(*a, **k):
+        asked["n"] += 1
+        return False
+
+    monkeypatch.setattr(orch.Confirm, "ask", _ask)
+    ran = {"called": False}
+
+    class _R:
+        error = ""
+        hosts = []
+        findings = []
+        credentials = []
+        summary = "ok"
+        command_str = "nmap"
+        returncode = 0
+        duration = 0.0
+        stderr = ""
+
+    def _run(*a, **k):
+        ran.update(called=True)
+        return _R()
+
+    monkeypatch.setattr(o.tools["nmap"], "run", _run)
+    monkeypatch.setattr(o, "_apply_result", lambda r: None)
+
+    o._execute_tool("nmap", {"target": "10.0.0.5", "profile": "default"})
+
+    assert asked["n"] == 0, "non-intrusive tool was gated despite the setting"
+    assert ran["called"] is True
+
+
+def test_tool_and_menu_intrusive_flags_agree():
+    """Two places record intrusiveness - the tool (which executes) and the
+    menu Action (a suggestion). They must not drift."""
+    from ghostops.agent.next_steps import build_actions
+    reg = build_registry(load_config())
+    from_tools = {n for n, t in reg.items() if t.intrusive}
+    assert from_tools == {"hydra", "sqlmap", "nikto"}, from_tools
+
+    e = Engagement(id="e", scope=["10.0.0.5"])
+    h = Host(ip="10.0.0.5")
+    h.services = [
+        Service(port=80, name="http", product="Apache httpd", version="2.4.41"),
+        Service(port=22, name="ssh", product="OpenSSH", version="8.2p1"),
+    ]
+    e.hosts = [h]
+    for a in build_actions(e, set(reg)):
+        assert a.intrusive == reg[a.tool].intrusive, (
+            f"{a.tool}: menu says intrusive={a.intrusive}, "
+            f"tool says {reg[a.tool].intrusive}")

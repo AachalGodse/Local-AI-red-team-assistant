@@ -22,6 +22,7 @@ _INJECTABLE_HINT = "sqlmap identified the following injection point"
 class SqlmapTool(BaseTool):
     name = "sqlmap"
     binary = "sqlmap"
+    intrusive = True
     description = (
         "Automated SQL-injection tester for web URLs. Detects injectable "
         "parameters and fingerprints the DBMS. NOISY. Args: url (required, "
