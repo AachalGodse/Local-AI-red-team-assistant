@@ -36,7 +36,7 @@ The reasoning model turns plain English into a tool choice and ranks the next st
 - **Menu-driven next steps** — numbered, built from the tool registry against what's actually in memory. Non-intrusive actions first; intrusive ones flagged and sorted last.
 - **Six integrated tools** — nmap, gobuster, searchsploit, sqlmap, hydra, nikto — run directly, with output parsed into structured findings.
 - **Structured memory (SQLite)** — one database per engagement: hosts, services, findings, credentials, web targets, and an activity log.
-- **Kill-chain phases** — reconnaissance → scanning → enumeration → exploitation → reporting, auto-advancing as you progress.
+- **Kill-chain phases** — reconnaissance → scanning → enumeration → exploitation → post-exploitation → reporting, auto-advancing as you progress.
 - **Grounded RAG (`ask`)** — ask questions about an engagement in plain English and get an answer drawn *only* from retrieved findings, with a Sources table. Hardened against prompt injection from scanner-controlled text.
 - **Semantic recall** — search an engagement's findings by meaning, not just exact match.
 - **Curated payload generator** — reverse / bind / web shells, listeners, TTY upgrades, with OPSEC notes. Payloads come from a reviewed dataset, never the model.
@@ -64,7 +64,7 @@ Intrusiveness is a real flag in code, not just documentation: intrusive tools ar
 
 ## Installation
 
-**Requirements:** Python ≥ 3.11, Linux (tested on Kali and Fedora).
+**Requirements:** Python ≥ 3.11, Linux. Developed and tested on Kali (including WSL2); the installer also has a Fedora/`dnf` path, which is supported but not yet tested.
 
 ```bash
 git clone https://github.com/AachalGodse/Local-AI-red-team-assistant
@@ -159,7 +159,7 @@ ghostops report -o engagement.md
 
 Run bare `ghostops` for the welcome screen; `--no-intro` skips the first-run walkthrough.
 
-**In-engagement REPL:** `scan`, `gobuster`, `searchsploit`, `sqlmap`, `hydra`, `payloads`, `revshell`, `webshell`, `listener`, `tty`, `privesc`, `checklist`, `attack`, `recall`, `ask`, `what do we know`, `next`, `scope` / `scope add`, `tools`, `phase`, `help`, `exit`.
+**In-engagement REPL:** `scan`, `gobuster`, `nikto`, `searchsploit`, `sqlmap`, `hydra`, `payloads`, `revshell`, `webshell`, `listener`, `tty`, `privesc`, `checklist`, `attack`, `recall`, `ask`, `what do we know`, `next`, `scope` / `scope add`, `tools`, `phase`, `help`, `exit`.
 
 ---
 
