@@ -41,6 +41,30 @@ _PAYLOAD_CATEGORIES = frozenset(
 )
 
 
+# Words that start a question and nothing else. Deliberately NOT here:
+# do, does, is, are, can, should - "do a full port sweep of the target" is
+# documented natural-language TOOL routing, and hijacking it into `ask` would
+# break it. Those still reach `ask` when the line ends with '?'.
+_QUESTION_WORDS = frozenset(
+    ("what", "why", "how", "where", "which", "who"))
+
+
+def _looks_like_question(text: str) -> bool:
+    """Plain-English question, or an instruction for the tool router?
+
+    Two signals, in order of strength: a trailing '?' always wins; otherwise
+    the first word has to be an unambiguous interrogative. Kept deliberately
+    dumb so an operator can predict which path their line takes.
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.endswith("?"):
+        return True
+    first = re.split(r"[^a-z]", t.lower(), maxsplit=1)[0]
+    return first in _QUESTION_WORDS
+
+
 def _cfg_num(cfg, key: str, default, cast):
     """Read a numeric config value, tolerating a missing, null or malformed
     one. `ask` tuning must never prevent an engagement from opening."""
@@ -245,6 +269,16 @@ class Orchestrator:
         if first.lower() in _PAYLOAD_CATEGORIES:
             return self._handle_generate(first.lower(), rest.strip())
 
+        # ---- a plain-English question -> the grounded answer path ----
+        # Only when there is something to ground on. With no findings (or no
+        # vector store) every question would come back NO RELEVANT FINDINGS,
+        # which would gut `ghostops shell`'s free-form chat and every question
+        # asked before the first scan. The explicit `ask` command is always
+        # grounded, regardless.
+        if (_looks_like_question(text) and self.vec.available()
+                and self.e.findings):
+            return self._ask_question(text.strip(), auto=True)
+
         # ---- LLM routing (or offline fallback) ----
         if self._llm_ok:
             return self._llm_route(text)
@@ -274,9 +308,24 @@ class Orchestrator:
                 console.print(f"[dim]>> {reasoning}[/dim]")
             return self._execute_tool(tool, args)
         # default: respond
-        msg = decision.get("message") or self._freeform(text)
-        console.print(Panel(msg, border_style="blue", title="GhostOps"))
+        msg = (decision.get("message") or "").strip()
+        if not msg:
+            msg = (self._freeform(text) or "").strip()
+        if not msg:
+            # A 7B router will occasionally answer "respond" with nothing to
+            # say. Printing an empty bordered panel reads as a broken tool.
+            return self._hint()
+        # Model output is rendered text: escape it, or a stray '[/red]' raises
+        # MarkupError and kills the REPL turn.
+        console.print(Panel(escape(msg), border_style="blue", title="GhostOps"))
         self._log("llm", "advice", msg[:200])
+
+    def _hint(self) -> None:
+        """What to say when nothing else matched. Never return silence."""
+        console.print(
+            "[yellow]unknown input.[/yellow] Try [cyan]help[/cyan], a command, "
+            "or ask a question (end it with [cyan]?[/cyan])."
+        )
 
     def _freeform(self, text: str) -> str:
         try:
@@ -692,7 +741,15 @@ class Orchestrator:
             console.print("usage: ask <question>   "
                           "e.g. ask what did we find on the web servers")
             return
+        self._ask_question(question)
 
+    def _ask_question(self, question: str, auto: bool = False) -> None:
+        """The grounded answer path itself.
+
+        Shared verbatim by the `ask` command and by an auto-routed question, so
+        both get the same retrieval, the same untrusted-findings framing and
+        the same output guard. `auto` only changes one dim line of help.
+        """
         if self.vec.available():
             if not (self.llm.available()
                     and self.llm.has_model(self._embed_model)):
@@ -711,8 +768,18 @@ class Orchestrator:
             llm_ready=self._llm_ok,
         )
         self._render_grounded(question, res)
-        self._log("ask", f"ask: {question}", f"mode={res.mode} "
-                                             f"sources={len(res.used)}")
+        if auto and res.mode == rag.MODE_NO_FINDINGS:
+            # Say why, rather than leave the operator thinking GhostOps is
+            # broken. No fallback to ungrounded chat: answering an engagement
+            # question from the model's own knowledge is the hallucination
+            # this whole path exists to prevent.
+            console.print(
+                "[dim]answered only from this engagement's findings - for "
+                "general questions use [/dim][cyan]ghostops shell[/cyan][dim] "
+                "or rephrase as an instruction.[/dim]"
+            )
+        self._log("ask", f"ask: {question}",
+                  f"mode={res.mode} sources={len(res.used)} auto={auto}")
 
     def _render_grounded(self, question: str, res) -> None:
         """Answer first, then the provenance table. Every claim the model makes
