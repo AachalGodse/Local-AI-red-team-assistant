@@ -500,7 +500,8 @@ class Orchestrator:
     def _rank_menu(self, menu: list[Action]) -> list[Action]:
         """Let the model reorder the candidates by relevance. It can only
         reorder the given numbers; invalid/missing ones are handled here, so it
-        can never invent or drop a step."""
+        can never invent or drop a step - and it can never promote an intrusive
+        step above a safe one (see the stable re-sort at the end)."""
         listing = "\n".join(f"{i}. {a.label}" for i, a in enumerate(menu, 1))
         try:
             decision = self.llm.chat_json([
@@ -520,6 +521,12 @@ class Orchestrator:
         for i, a in enumerate(menu, 1):        # append anything the model omitted
             if i not in seen:
                 ranked.append(a)
+        # Relevance is the model's call; ordering safety is not. build_actions
+        # puts intrusive steps last, and without re-applying that here the
+        # model's order silently discarded it - a ranked menu could open with
+        # hydra. Stable, so the model's relative order survives WITHIN each
+        # group. The model is never even told which steps are intrusive.
+        ranked.sort(key=lambda a: a.intrusive)
         return ranked
 
     def _render_menu(self) -> None:

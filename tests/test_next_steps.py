@@ -3,7 +3,7 @@ from ghostops.agent.next_steps import (
     Action, QUIT, build_actions, resolve_choice,
 )
 from ghostops.config import load_config
-from ghostops.models import Engagement, Finding, Host, Service
+from ghostops.models import Engagement, Finding, Host, Phase, Service
 from ghostops.tools.registry import build_registry
 
 REG = build_registry(load_config())
@@ -152,3 +152,105 @@ def test_nikto_menu_pick_still_hits_confirm(tmp_path, monkeypatch):
                         lambda *a, **k: ran.update(called=True))
     o._run_action(nk)
     assert ran["called"] is False        # intrusive -> confirm gate held
+
+
+# --------------------------------------------- intrusive ordering vs the model
+
+class _RankLLM:
+    """Stands in for the router. Returns whatever `order` it was constructed
+    with, so a test can simulate the model doing exactly what RANK_SYSTEM asks
+    ("most promising first") and putting a brute-force step at the top."""
+
+    def __init__(self, order):
+        self.order = order
+        self.seen_listing = None
+
+    def available(self):
+        return True
+
+    def has_model(self, model=None):
+        return True
+
+    def chat_json(self, messages, **kw):
+        self.seen_listing = messages[-1]["content"]
+        return {"order": self.order}
+
+
+def _orc_with(menu, llm):
+    """A bare Orchestrator with just enough wired up to call _rank_menu."""
+    from ghostops.agent.orchestrator import Orchestrator
+    o = Orchestrator.__new__(Orchestrator)
+    o.llm = llm
+    o.e = Engagement(id="e", name="t", scope=["10.0.0.5"], phase=Phase.RECON)
+    o._menu = menu
+    return o
+
+
+def _menu():
+    from ghostops.agent.next_steps import Action
+    return [
+        Action(label="Enumerate web content", tool="gobuster",
+               args={"url": "http://10.0.0.5/"}),
+        Action(label="Search exploits", tool="searchsploit",
+               args={"query": "Apache 2.4.41"}),
+        Action(label="Brute-force SSH login", tool="hydra",
+               args={"target": "10.0.0.5", "service": "ssh"}, intrusive=True),
+        Action(label="Scan web service for vulns", tool="nikto",
+               args={"url": "http://10.0.0.5/"}, intrusive=True),
+    ]
+
+
+def test_model_cannot_promote_an_intrusive_step_above_a_safe_one():
+    """The model ranks by relevance; it does not get to decide that a
+    brute-force is the first thing the operator is offered."""
+    menu = _menu()
+    # the model asks for hydra and nikto first - exactly what "most promising
+    # first" invites it to do
+    llm = _RankLLM([3, 4, 1, 2])
+    ranked = _orc_with(menu, llm)._rank_menu(menu)
+
+    flags = [a.intrusive for a in ranked]
+    assert flags == sorted(flags), flags
+    assert ranked[0].intrusive is False
+    assert set(id(a) for a in ranked) == set(id(a) for a in menu)  # same set
+
+
+def test_ranking_still_reorders_within_each_group():
+    """The safety re-sort is stable, so the model's judgement still applies
+    among the safe steps and among the intrusive ones."""
+    menu = _menu()
+    llm = _RankLLM([2, 1, 4, 3])       # swap within both groups
+    ranked = _orc_with(menu, llm)._rank_menu(menu)
+    assert [a.tool for a in ranked] == ["searchsploit", "gobuster",
+                                        "nikto", "hydra"]
+
+
+def test_model_is_never_told_which_steps_are_intrusive():
+    """Ordering safety must not depend on the model cooperating - so it isn't
+    given the flag to reason about in the first place."""
+    from ghostops.ai.prompts import RANK_SYSTEM
+    menu = _menu()
+    llm = _RankLLM([1, 2, 3, 4])
+    _orc_with(menu, llm)._rank_menu(menu)
+    assert "intrusive" not in (llm.seen_listing or "").lower()
+    assert "intrusive" not in RANK_SYSTEM.lower()
+
+
+def test_omitted_and_invalid_indices_still_cannot_break_the_ordering():
+    menu = _menu()
+    llm = _RankLLM([3, 3, 99, "2", None])     # dupes, out of range, wrong types
+    ranked = _orc_with(menu, llm)._rank_menu(menu)
+    assert len(ranked) == len(menu)
+    assert set(id(a) for a in ranked) == set(id(a) for a in menu)
+    flags = [a.intrusive for a in ranked]
+    assert flags == sorted(flags), flags
+
+
+def test_ranking_failure_keeps_the_deterministic_order():
+    class Boom:
+        def chat_json(self, messages, **kw):
+            raise RuntimeError("ollama down")
+
+    menu = _menu()
+    ranked = _orc_with(menu, Boom())._rank_menu(menu)
+    assert [a.tool for a in ranked] == [a.tool for a in menu]

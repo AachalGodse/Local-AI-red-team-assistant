@@ -72,6 +72,10 @@ cd Local-AI-red-team-assistant
 bash install.sh                 # core + system tools + Ollama
 ```
 
+> **Note:** the repository is currently **private**, so an unauthenticated
+> `git clone` will fail. Until it is made public you need repository access
+> (or a local copy of the source) for this step.
+
 The installer is idempotent and runs in four stages: system tools (auto-detects `apt` or `dnf`), pipx, Ollama (installs it, starts the server, pulls `dolphin-mistral`), then GhostOps itself.
 
 Options:
@@ -147,7 +151,7 @@ ghostops report -o engagement.md
 | `resume [id]` | Resume a previous engagement (defaults to the last) |
 | `report [id] -o <file>` | Generate a markdown pentest report |
 | `engagements` | List all saved engagements |
-| `generate <category>` | Generate a curated offensive payload |
+| `generate [category] [name] -l <lhost> -p <lport>` | Render a curated offensive payload. With only a category it *lists* that category's catalog instead |
 | `checklist <service>` | Show the enumeration checklist for a service |
 | `attack` | Show the action → MITRE ATT&CK mapping |
 | `recall <question> [id]` | Semantic search over an engagement's findings |
@@ -169,13 +173,13 @@ GhostOps holds three lines throughout:
 
 1. **The model reasons; it never invents.** Tool choices are constrained to the real registry, payloads come from a curated dataset, and reported findings come from actual tool output. The grounded `ask` path answers only from retrieved findings and refuses when they don't cover the question.
 2. **Safety guards are non-bypassable.** The scope guard, confirmation gate, and shell-injection-safe command building sit in front of every tool and cannot be routed around.
-3. **It works offline.** Every feature degrades gracefully — no model, no ChromaDB, no network — rather than dead-ending.
+3. **It works offline.** With no model, no network, or no ChromaDB, GhostOps keeps running: tools still execute, the deterministic router takes over, and the semantic features report what is missing instead of crashing. The one exception is the `ghostops ask` / `ghostops recall` *subcommands*, which exit non-zero when ChromaDB is absent; the same commands inside an engagement print the install hint and carry on.
 
 ---
 
 ## Known limitations
 
-- **Refusal wording under injection.** The grounded `ask` path is defended in depth against text planted by a hostile scanned host: retrieved findings are treated as untrusted data, dangerous content (commands, credentials, forged citations) is stripped or withheld, and an independent output guard runs after the model. A hostile host can still influence the *wording* of a refusal, but the dangerous content itself is never reproduced. This residual is documented and accepted.
+- **Planted text still reaches the screen, just not the answer.** The grounded `ask` path is defended in depth against text planted by a hostile scanned host: retrieved findings are fenced as untrusted data, citation-shaped text is defused, and an independent output guard withholds any answer containing a command shape or a citation to a finding that does not exist. Two residuals are accepted rather than hardened further. First, the **Sources** table printed under every answer shows each finding's raw text on purpose, so you can audit what the model was given — which means planted content is visible there even when it is kept out of the answer. Treat Sources rows as untrusted scanner output, not as GhostOps' own conclusions. Second, a hostile host can influence the *wording* of a refusal, though not the dangerous content inside it.
 
 ---
 
@@ -191,4 +195,4 @@ pytest
 
 ## License
 
-See the repository for license details.
+MIT — see the [`LICENSE`](LICENSE) file at the repository root.
