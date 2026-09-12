@@ -1,8 +1,8 @@
 # GhostOps payload knowledge base.
 #
-# CURATED AND VERIFIED - deliberately NOT model-generated. Gap #5 in
-# GhostOps_Plan.md 2.1 is "LLMs fabricate non-existent CVEs, wrong exploit
-# syntax, fake tool flags". A generator that asks the model for a reverse
+# CURATED AND VERIFIED - deliberately NOT model-generated. A known LLM
+# failure mode is fabricating non-existent CVEs, wrong exploit
+# syntax, fake tool flags. A generator that asks the model for a reverse
 # shell reintroduces exactly that gap. Same principle as searchsploit_tool.py:
 # ground offensive output in real, reviewed data.
 #

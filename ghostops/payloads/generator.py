@@ -1,8 +1,8 @@
 """Payload generator - renders curated templates from the knowledge base.
 
 Design (mirrors searchsploit_tool.py's grounding principle): payloads come from
-a reviewed YAML catalog, NOT from the LLM. GhostOps_Plan.md lists "LLMs
-fabricate wrong exploit syntax" as a core gap; asking the model to write a
+a reviewed YAML catalog, NOT from the LLM. A core gap is that LLMs
+fabricate wrong exploit syntax; asking the model to write a
 reverse shell would reintroduce it. So we curate, and the model's only job is
 to help pick an entry - never to author the bytes.
 
