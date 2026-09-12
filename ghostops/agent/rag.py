@@ -400,7 +400,8 @@ def answer(vec: Any, llm: Any, question: str,
         return GroundedAnswer(
             MODE_UNAVAILABLE,
             message="Semantic memory needs ChromaDB. Install it: "
-                    "pip install chromadb  (or  pip install -e '.[rag]').",
+                    "pipx inject ghostops 'chromadb>=0.5'  "
+                    "(or  pip install -e '.[rag]'  in a venv).",
         )
 
     raw_hits = vec.query(question, k=k)

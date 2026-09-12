@@ -1,8 +1,12 @@
 # Known issues
 
-Tracked, not yet fixed. Found by auditing the README against the tree at
-`5b24137` — each item was verified against the source, and several were
-demonstrated by running the code. Line references are to that commit.
+Items 1-13 came from auditing the README against the tree at `5b24137` —
+each was verified against the source, and several were demonstrated by
+running the code; their line references are to that commit. Items 14-15
+were found in lab runs; their references are to `bd98bde`.
+
+Anything since fixed is marked **Fixed** and kept for the record rather
+than deleted. **14 of the 15 are still open.**
 
 Severity is about impact on a user, not effort:
 
@@ -96,6 +100,8 @@ install.sh` without `--rag` does not install either. Mark both bullets as
 requiring the extra.
 
 ### 10. `pip install -e '.[rag]'` fails on the platform the README targets — low
+**Fixed** — the README now shows the virtualenv form. Kept for the record.
+
 `README.md:101`. Kali and Debian ship an externally-managed Python (PEP 668), so
 a bare `pip install -e` outside a virtualenv is refused. Show the venv form, or
 `--break-system-packages`.
@@ -117,3 +123,26 @@ carries an `opsec` field.
 `README.md:155`. The argument is optional (`ghostops/cli.py:174`); bare
 `checklist` lists every service. The README's own notation elsewhere
 (`resume [id]`, `report [id]`) would write it with brackets.
+
+---
+
+## Output and presentation
+
+### 14. Nikto findings are not printed inline — low
+A nikto run shows only its one-line summary. `_render_result`
+(`ghostops/agent/orchestrator.py:463`) prints that summary plus a per-host
+port table gated on `if result.hosts:`, and never reads `result.findings`.
+Nikto populates `result.findings` (`ghostops/tools/nikto_tool.py:87`) and
+returns no hosts, so its items are stored correctly but invisible at the
+moment you run it — they surface only via `what do we know`, `recall`, `ask`,
+or the report. Render `result.findings` in `_render_result`.
+
+### 15. A briefing can blend hosts — low
+`_brief` (`ghostops/agent/orchestrator.py:479`) scopes its user payload to
+the current result, but builds its system message as `SUMMARIZE_SYSTEM` plus
+`self._context_blob()`, and `_context_blob`
+(`ghostops/agent/orchestrator.py:994`) emits engagement-wide state including
+up to ten hosts and their ports. In a multi-host engagement the model can
+therefore attribute one host's services to another in the free-text
+briefing. The stored per-host data is unaffected and stays correct. Scope
+the briefing's context to the host just scanned.

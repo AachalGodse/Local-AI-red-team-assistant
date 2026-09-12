@@ -11,3 +11,5 @@ config.yaml
 engagements/*.db
 engagements/*.chroma/
 report*.md
+# private planning doc - not part of the public repo
+GhostOps_Plan.md

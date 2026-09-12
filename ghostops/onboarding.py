@@ -102,6 +102,10 @@ def welcome(console: Console) -> None:
         ("what do we know", "full engagement summary"),
     ]
     if _rag_present():
+        repl_cmds.append(("ask <question>",
+                          "grounded answer from stored findings only (RAG)"))
+        repl_cmds.append(("<a question>?",
+                          "auto-routed to ask - no prefix needed"))
         repl_cmds.append(("recall <question>", "semantic search of findings (RAG)"))
     repl_cmds.append(("help / exit", "help, or leave the engagement"))
 

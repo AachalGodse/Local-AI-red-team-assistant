@@ -229,7 +229,7 @@ def recall(
     eng_dir = cfg.get("engagements.dir", "./engagements")
     if not chromadb_available():
         console.print("[yellow]Semantic recall needs ChromaDB.[/yellow] "
-                      "Install: [cyan]pip install chromadb[/cyan]")
+                      "Install: [cyan]pipx inject ghostops 'chromadb>=0.5'[/cyan]")
         raise typer.Exit(1)
     if engagement_id == "last":
         items = list_engagements(eng_dir)
@@ -306,7 +306,7 @@ def ask(
     eng_dir = cfg.get("engagements.dir", "./engagements")
     if not chromadb_available():
         console.print("[yellow]Grounded answers need ChromaDB.[/yellow] "
-                      "Install: [cyan]pip install chromadb[/cyan]")
+                      "Install: [cyan]pipx inject ghostops 'chromadb>=0.5'[/cyan]")
         raise typer.Exit(1)
     if engagement_id == "last":
         items = list_engagements(eng_dir)

@@ -683,7 +683,8 @@ class Orchestrator:
         if not self.vec.available():
             console.print(
                 "[yellow]Semantic recall needs ChromaDB.[/yellow] Install it: "
-                "[cyan]pip install chromadb[/cyan]  (or  pip install -e '.[rag]')."
+                "[cyan]pipx inject ghostops 'chromadb>=0.5'[/cyan]  "
+                "(or  pip install -e '.\\[rag]'  in a venv)."
             )
             return
         if not (self.llm.available() and self.llm.has_model(self._embed_model)):
