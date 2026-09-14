@@ -213,7 +213,7 @@ pytest
 
 ## Authors
 
-GhostOps was built by **Mayurdhvajsinh** and **Aachal Godse**.
+GhostOps was built by **Mayurdhvajsinh** (https://github.com/Uzumaki-MK4) and **Aachal Godse** (https://github.com/AachalGodse).
 
 ---
 
